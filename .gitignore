@@ -1,0 +1,20 @@
+# Credenciales locales
+.env
+.env.*
+!.env.example
+
+# .NET
+**/bin/
+**/obj/
+.vs/
+
+# JavaScript
+**/node_modules/
+**/dist/
+.expo/
+
+# Editor y sistema
+.idea/
+.DS_Store
+Thumbs.db
+/backend/tests/*.zip

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DjRequests.Api/DjRequests.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DjRequests.IntegrationTests/DjRequests.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

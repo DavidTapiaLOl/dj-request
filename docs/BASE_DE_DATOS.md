@@ -1,0 +1,88 @@
+# Diseño de datos — propuesta técnica v1
+
+PostgreSQL 17, esquema public. Fuente ejecutable: migraciones EF Core, todavía no creadas ni aplicadas. Este documento diseña el modelo; no representa una base ya implementada. UUID para PK; timestamptz para fechas UTC; snake_case en tablas/columnas. NOT NULL salvo marcado nullable. Longitudes se validan también en API. Restricciones con nombres explícitos.
+
+## 1. djs — identidad permanente
+Mapear DjAccount : IdentityUser<Guid> a djs. Conservar todas las propiedades necesarias de Identity (normalización, password_hash, security_stamp, concurrency_stamp, email_confirmed, bloqueo, intentos fallidos y campos de teléfono/2FA), aunque la UI inicial no use todas. No sustituirlas por un password varchar propio.
+Campos de negocio: nombre_artistico varchar(100), estado varchar(16) default activo CHECK IN (activo,suspendido), created_at timestamptz, updated_at timestamptz.
+Email requerido; exigir email normalizado único, además de índice de usuario normalizado único de Identity. UserName se establece al correo por servicio, no por datos del invitado. Mantener hash y configuración de Identity. Tabla djs contiene exclusivamente DJs; permisos de administración no se conceden aquí.
+Identity necesita tablas auxiliares de claims, logins, tokens y, si se habilitan roles, roles/relaciones. No cuentan como cuentas adicionales de invitados. Preferir mappings estándar de Identity y documentar nombres exactos generados; no eliminar campos/tablas para cumplir artificialmente el listado resumido.
+No sembrar cuentas/passwords de prueba en migración.
+
+## 2. salas
+| Columna | Tipo | Regla |
+|---|---|---|
+| id | uuid | PK |
+| dj_id | uuid | FK djs(id), ON DELETE RESTRICT |
+| nombre | varchar(120) | trim no vacío |
+| codigo | varchar(12) | Único; código aleatorio criptográfico de 10 caracteres mayúsculos sin ambiguos |
+| estado | varchar(16) | abierta, pausada, cerrada; default abierta |
+| starts_at | timestamptz | Inicio programado |
+| ends_at | timestamptz | Mayor que starts_at |
+| timezone | varchar(64) | Zona IANA validada en API; default America/Mexico_City |
+| purge_at | timestamptz | ends_at + 168 horas, calculado por servicio |
+| max_solicitudes_sesion | integer | Default 10, CHECK > 0 |
+| max_playlists_sesion | integer | Default 2, CHECK > 0 |
+| intervalo_envio_segundos | integer | Default 30, CHECK >= 0 |
+| version | bigint | Concurrency token gestionado por aplicación, inicial 1 |
+| created_at / updated_at | timestamptz | UTC |
+
+CHECK purge_at > ends_at; servicio y pruebas garantizan diferencia exacta de 168 horas. Cambiar ends_at y purge_at atómicamente. Version incrementa en toda modificación y sirve para detectar actualizaciones simultáneas.
+Índices: UNIQUE(codigo), (dj_id, created_at DESC), (purge_at). Código se genera con reintento ante colisión UNIQUE, nunca MAX+1 ni random predecible. QR se genera desde URL y código; no almacenar PNG.
+La autorización de envíos comprueba estado y reloj además de columnas: now < ends_at, now < purge_at, DJ activo. FK RESTRICT para DJ evita borrados masivos accidentales; eliminación de cuenta tendrá flujo explícito posterior.
+
+## 3. sesiones_invitado
+id uuid PK; sala_id uuid FK salas(id) ON DELETE CASCADE; token_hash varchar(64) UNIQUE (SHA-256 hexadecimal de token aleatorio de al menos 256 bits); created_at, expires_at timestamptz; revoked_at timestamptz nullable; ultimo_envio_at timestamptz nullable.
+CHECK expires_at > created_at. Servicio limita expires_at <= ends_at y comprueba estado de sala; una extensión del evento no revive tokens vencidos. Índice (sala_id). UNIQUE(sala_id,id) para relaciones compuestas de pertenencia.
+Sin email, nombre, contraseña ni fingerprint. No guardar tokens originales ni IP permanente. Reingreso al mismo navegador puede reutilizar token vigente; una sesión distinta no equivale necesariamente a otra persona. Sesión de sala expirada/revocada devuelve error y no lista contenido.
+
+## 4. generos
+id smallint PK con IDs estables; nombre varchar(60) UNIQUE; activo boolean default true. Catálogo permanente no contiene historial musical.
+Semilla propuesta: 1 Pop, 2 Rock, 3 Reguetón, 4 Regional mexicano, 5 Electrónica, 6 Salsa, 7 Cumbia, 8 Bachata, 9 Hip-hop/Rap, 10 R&B, 11 Otro. No crear No sé: dejar null. Es catálogo editable posteriormente, no clasificación exhaustiva.
+
+## 5. solicitudes
+| Columna | Tipo | Regla |
+|---|---|---|
+| id | uuid | PK |
+| sala_id | uuid | FK salas ON DELETE CASCADE |
+| sesion_id | uuid | Pertenencia mediante FK compuesta |
+| nombre | varchar(200) | CHECK btrim(nombre) <> '' |
+| artista | varchar(200) nullable | Vacíos normalizados a null |
+| genero_id | smallint nullable | FK generos ON DELETE RESTRICT |
+| enlace | varchar(2048) nullable | HTTP/HTTPS validado en API |
+| estado | varchar(16) | pendiente, aceptada, reproducida, rechazada; default pendiente |
+| idempotency_key | uuid | Generada por cliente para cada intento lógico |
+| version | bigint | Concurrency token, inicial 1 |
+| created_at / updated_at | timestamptz | UTC |
+
+FK(sala_id,sesion_id) → sesiones_invitado(sala_id,id) ON DELETE CASCADE impide cruzar sesiones/salas incluso por SQL. PostgreSQL permite cascadas desde sala por ambas rutas; inspeccionar migración y probar borrado real. No convertirla en FK simple a sesion_id.
+UNIQUE(sesion_id,idempotency_key) evita duplicar por reintento de red. Reintento con misma clave y mismo payload devuelve original sin consumir cuota; payload diferente devuelve conflicto. Rechazar claves inválidas. No UNIQUE(nombre), ni deduplicación automática por título.
+Índices: (sala_id,created_at,id) y (sala_id,estado,created_at,id), (genero_id). Usar los índices existentes para counts por sesión antes de añadir otros.
+DTO público incluye únicamente id, nombre, artista, género, enlace, estado y fecha. Se requiere sesión de esa sala para consultarlo. No filtrar playlists de una respuesta mezclada: consultas separadas.
+
+## 6. playlists_compartidas
+id uuid PK; sala_id uuid FK salas ON DELETE CASCADE; sesion_id uuid; nombre varchar(200) nullable; enlace varchar(2048) requerido/no vacío; idempotency_key uuid; created_at timestamptz.
+FK compuesta (sala_id,sesion_id) → sesiones_invitado(sala_id,id) ON DELETE CASCADE. UNIQUE(sesion_id,idempotency_key). Índice(sala_id,created_at,id). Validación HTTP/HTTPS; no scraping ni importación. Invitado puede crear y recibe acuse mínimo, no endpoint de listado/detalle de playlists. Solo DJ propietario puede leerlas. No publicar sus datos en canal compartido.
+
+## 7. administradores — fase 3, no migrar ahora
+Cuenta interna separada de DJs/invitados. Usar Identity en contexto de autenticación separado con tablas auxiliares prefijadas admin_; administrador base id uuid, correo normalizado único, nombre varchar(100), activo boolean y created_at. Resolver sesión y segundo factor al desarrollar administración. Alta mediante procedimiento interno explícito, nunca migración con password común.
+
+## 8. auditoria_admin — fase 3, no migrar ahora
+id uuid PK; administrador_id uuid nullable FK administradores ON DELETE SET NULL; accion varchar(80), tipo_recurso varchar(40), recurso_id uuid nullable (referencia informativa, no FK a sala); resultado varchar(20), created_at timestamptz. Índices por fecha y administrador/fecha. No almacenar payload libre, títulos, enlaces, correos ni tokens. Retención operativa separada propuesta de 90 días, revisar antes de producción.
+
+## Concurrencia, limpieza y límites
+Creación de contenido: transacción, bloquear sala para coordinar cierre/reprogramación/limpieza y sesión para cuota/intervalo. Orden de bloqueo consistente sala→sesión. Revalidar estado tras obtener bloqueo. Buscar idempotencia antes de consumir cuota. Cuenta total de solicitudes de sesión incluye rechazadas; no puede eludirse al cambiar estado.
+Worker: buscar hasta 100 salas purge_at <= now por lote, bloquear con mecanismo PostgreSQL apropiado (por ejemplo FOR UPDATE SKIP LOCKED), revalidar caducidad y borrar dentro de transacción. Cascadas eliminan sesiones, solicitudes y playlists. No conservar snapshots. Reintentos seguros; no logs de contenido. Inyectar reloj para pruebas. Mostrar elegibilidad de borrado claramente al DJ.
+
+## Pruebas de aceptación del esquema
+1. Correo DJ normalizado duplicado falla; no hashes/credenciales en DTO.
+2. Sala con ends_at <= starts_at falla; purge_at se recalcula al reprogramar.
+3. Solicitud sin título o con estado desconocido falla.
+4. Sesión de sala A referenciada por petición/playlist de sala B falla por FK.
+5. Misma idempotency_key/sesión no crea segunda fila.
+6. Borrar sala elimina contenido y sesiones; conserva DJ y catálogo.
+7. Artista/género/enlace omitidos son null; playlist sin enlace falla.
+Pruebas API posteriores: acceso de otro DJ denegado; invitado no lee playlists; límite concurrente exacto; sala cerrada no recibe; a purge_at no hay acceso aunque worker esté detenido.
+
+## Migraciones y aplicación
+Generar InitialCore con entidades 1–6 e Identity auxiliar. Revisar SQL antes de aplicar a dj_requests. Fases futuras crean sus propias migraciones. No usar EnsureCreated ni borrar volúmenes para resolver fallas. Tests en base independiente; jamás drop sobre dj_requests. Verificar backup antes de cambios con datos relevantes.
