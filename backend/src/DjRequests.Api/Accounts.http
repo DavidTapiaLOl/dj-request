@@ -1,0 +1,39 @@
+@baseUrl = http://localhost:5000
+@accessToken = {{login.response.body.accessToken}}
+@refreshToken = {{login.response.body.refreshToken}}
+
+### Register
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "dj@example.com",
+  "password": "passphrase-de-12-chars-minimo",
+  "artistName": "DJ Example"
+}
+
+### Login
+# @name login
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "dj@example.com",
+  "password": "passphrase-de-12-chars-minimo"
+}
+
+### Refresh
+POST {{baseUrl}}/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### Me
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{accessToken}}
+
+### Me (con token expirado - para testing)
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{accessToken}}
