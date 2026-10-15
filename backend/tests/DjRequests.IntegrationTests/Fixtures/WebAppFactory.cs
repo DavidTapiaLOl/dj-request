@@ -17,6 +17,10 @@ public class WebAppFactory : WebApplicationFactory<Program>
     private readonly string _dbName = $"dj_requests_test_{Guid.NewGuid():N}";
     private bool _disposed;
 
+    public bool EnableRegisterInsertBarrier { get; set; }
+
+    public RegisterInsertBarrierInterceptor? RegisterInsertBarrier { get; private set; }
+
     public WebAppFactory(PostgresFixture postgres)
     {
         _postgres = postgres;
@@ -36,6 +40,15 @@ public class WebAppFactory : WebApplicationFactory<Program>
         var testConnectionString = _postgres.Container.GetConnectionString()
             .Replace("Database=postgres", $"Database={_dbName}");
 
+        RegisterInsertBarrierInterceptor? barrier = null;
+        if (EnableRegisterInsertBarrier)
+        {
+            barrier = new RegisterInsertBarrierInterceptor(
+                participants: 2,
+                timeout: TimeSpan.FromSeconds(10));
+            RegisterInsertBarrier = barrier;
+        }
+
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<TimeProvider>();
@@ -43,7 +56,13 @@ public class WebAppFactory : WebApplicationFactory<Program>
             services.AddSingleton<IStartupFilter>(new TestIpStartupFilter());
 
             services.AddDbContext<DjRequestsDbContext>(options =>
-                options.UseNpgsql(testConnectionString));
+            {
+                options.UseNpgsql(testConnectionString);
+                if (barrier is not null)
+                {
+                    options.AddInterceptors(barrier);
+                }
+            });
         });
     }
 

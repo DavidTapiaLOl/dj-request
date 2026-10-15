@@ -21,11 +21,12 @@
 - `backend/src/DjRequests.Api/Modules/Accounts/Policies/ActiveDjRequirement.cs`
 - `backend/src/DjRequests.Api/Modules/Accounts/Policies/ActiveDjHandler.cs`
 - `backend/src/DjRequests.Api/Modules/Accounts/Options/AuthRateLimitOptions.cs`
-- `backend/src/DjRequests.Api/Program.cs` (configuración Identity, BearerToken, Authorization, RateLimiting)
+- `backend/src/DjRequests.Api/Program.cs` (configuración Identity, BearerToken, Authorization, RateLimiting, ProblemDetails 401/403)
 - `backend/src/DjRequests.Api/appsettings.json` (AuthRateLimits)
 - `backend/tests/DjRequests.IntegrationTests/Modules/Accounts/AuthEndpointsTests.cs`
 - `backend/tests/DjRequests.IntegrationTests/Modules/Accounts/RateLimitingTests.cs`
-- `backend/tests/DjRequests.IntegrationTests/Fixtures/WebAppFactory.cs` (base única por test, contenedor compartido)
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/WebAppFactory.cs` (base única por test, contenedor compartido, barrera de concurrencia)
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/RegisterInsertBarrierInterceptor.cs` (barrera determinista solo para tests, solo inserciones de `DjAccount`)
 - `backend/tests/DjRequests.IntegrationTests/Fixtures/TestIpStartupFilter.cs` (simulación de `RemoteIpAddress` vía header `X-Test-Client-IP`, solo infraestructura de pruebas)
 - `backend/tests/DjRequests.IntegrationTests/Fixtures/PostgresFixture.cs` (contenedor PostgreSQL compartido + colección IntegrationCollection)
 - `backend/tests/DjRequests.IntegrationTests/Fixtures/DatabaseFixture.cs` (WebAppFactoryCollection removed)
@@ -42,14 +43,25 @@ dotnet test backend\DjRequests.slnx --filter "(FullyQualifiedName~AuthEndpointsT
 dotnet test backend\DjRequests.slnx
 ```
 
-## Resultados (Tarea 02)
+## Comandos ejecutados (corrección acotada post-revisión)
+```cmd
+dotnet build backend\DjRequests.slnx --no-restore
+dotnet test backend\DjRequests.slnx --no-build
+dotnet test backend\DjRequests.slnx --no-build --filter "<filtro por test fallido>"
+```
+
+## Resultados (Tarea 02, tras la corrección acotada)
 - **Build**: Exitoso. 0 errores, 1 advertencia preexistente (CS0618 en `DatabaseFixture.cs`, no bloqueante).
-- **Tests completos**: 46/46 en verde (15 SchemaTests + 31 Accounts), ~19 s, con Docker disponible.
+- **Tests completos**: 64/64 en verde (15 SchemaTests + 41 AuthEndpointsTests + 8 RateLimitingTests), ~20 s, con Docker disponible.
+- **Validación de entradas (manual en handlers, antes de `Trim()`)**: `POST /api/auth/register`, `login` y `refresh` validan null/omitido, Email obligatorio + formato + ≤256, `artistName` obligatorio + ≤100 tras trim, `password` obligatorio sin trim (política Identity), `refreshToken` obligatorio; errores 400 con `ValidationProblemDetails` y claves de campo consistentes (`Email`, `ArtistName`, `Password`, `RefreshToken`). Ninguna entrada inválida produce 500; campos extra del cliente se ignoran.
 - **Auth Endpoints**:
-  - `POST /api/auth/register` — 201 Created; valida formato de email, artistName obligatorio (≤100, trim), password min 12 vía Identity, email único case-insensitive; errores de validación con claves de campo (`Email`, `ArtistName`).
-  - `POST /api/auth/login` — 200 OK con accessToken (15 min), refreshToken (7 días), tokenType=Bearer, expiresIn=900.
-  - `POST /api/auth/refresh` — 200 OK con nuevo par de tokens; valida expiración con TimeProvider, usuario, estado activo y security stamp.
+  - `POST /api/auth/register` — 201 Created; 409 por email duplicado (case-insensitive) con `ProblemDetails` y `Content-Type: application/problem+json` (SQLSTATE 23505 únicamente sobre `IX_djs_normalized_email`/`UserNameIndex`; otras violaciones de integridad NO se convierten en 409).
+  - `POST /api/auth/login` — 200 OK con accessToken (15 min), refreshToken (7 días), tokenType=Bearer, expiresIn=900. Fallos (inexistente, contraseña incorrecta, bloqueo, suspendido) devuelven 401 con mensaje genérico idéntico.
+  - `POST /api/auth/refresh` — 200 OK con nuevo par de tokens; valida formato/caducidad con TimeProvider, usuario, estado activo y `ValidateSecurityStampAsync`; token manipulado sin claim de stamp o con caducidad vencida → 401 (nunca 500; `CryptographicException` capturada).
   - `GET /api/auth/me` — 200/401/403 correctos; requiere política ActiveDj (estado="activo").
+- **ProblemDetails en 401/403**: middleware en `Program.cs` que, sin cuerpo escrito y con respuesta 401/403, emite RFC 9457 (`status`, título según RFC 9110 §15.5.2/§15.5.4) con `Content-Type: application/problem+json` vía `IProblemDetailsService`; no sobrescribe respuestas con cuerpo. El challenge bearer conserva la cabecera `WWW-Authenticate`.
+- **Lockout (.NET 10)**: al cruzar el umbral (5 intentos), `UserManager.AccessFailedAsync` reinicia `AccessFailedCount` a 0 y conserva el estado en `LockoutEnd` (15 min). El test verifica ambos estados: umbral sin bloqueo a los 4 intentos y bloqueo activo tras el 5º, con rechazo del password correcto.
+- **Concurrencia**: test con `Task.WhenAll` y barrera `RegisterInsertBarrierInterceptor` (solo en tests, solo inserciones de `DjAccount`, asíncrona con timeout de 10 s); resultado real: 1×201 + 1×409, una sola cuenta persistida, ambos requests atravesaron la barrera, ningún 500.
 - **Schemes por defecto**: `DefaultAuthenticateScheme`, `DefaultChallengeScheme` y `DefaultForbidScheme` fijados a `IdentityConstants.BearerScheme` (sin ellos, `AddIdentity` dejaba la cookie por defecto y el challenge redirigía a `/Account/Login` → 404).
 - **TimeProvider**: `BearerTokenOptions.TimeProvider` se enlaza al `TimeProvider` de DI (`TimeProvider.System` en producción, `FakeTimeProvider` en tests) para expiración de access token y refresh.
 - **Identity**: Password min 12 chars, lockout 5 intentos/15 min, email único normalizado.

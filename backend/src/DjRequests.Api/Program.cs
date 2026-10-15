@@ -126,6 +126,51 @@ var app = builder.Build();
 
 app.UseRateLimiter();
 
+app.Use(async (context, next) =>
+{
+    await next();
+
+    var statusCode = context.Response.StatusCode;
+    if (statusCode is not (StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden))
+    {
+        return;
+    }
+
+    if (context.Response.HasStarted
+        || context.Response.ContentType is not null
+        || context.Response.ContentLength > 0)
+    {
+        return;
+    }
+
+    context.Response.ContentLength = null;
+
+    var problemDetailsService = context.RequestServices.GetService<IProblemDetailsService>();
+    if (problemDetailsService is null)
+    {
+        return;
+    }
+
+    await problemDetailsService.WriteAsync(new ProblemDetailsContext
+    {
+        HttpContext = context,
+        ProblemDetails = new ProblemDetails
+        {
+            Title = statusCode == StatusCodes.Status401Unauthorized ? "No autorizado" : "Prohibido",
+            Detail = statusCode == StatusCodes.Status401Unauthorized
+                ? "La solicitud no supero la autenticacion."
+                : "La solicitud no tiene permisos para acceder al recurso.",
+            Status = statusCode,
+            Type = statusCode == StatusCodes.Status401Unauthorized
+                ? "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2"
+                : "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.4"
+        }
+    });
+});
+
+app.UseAuthentication();
+app.UseAuthorization();
+
 // Map health endpoints
 app.MapHealthEndpoints();
 

@@ -72,11 +72,11 @@ Registra un nuevo DJ.
 ```
 
 **Validaciones:**
-- Email: requerido, formato válido (EmailAddressAttribute), se hace trim
-- Password: requerido, mínimo 12 chars (sin requisitos de complejidad; lo valida Identity)
+- Email: requerido, formato válido (EmailAddressAttribute), se hace trim, máximo 256 chars
+- Password: requerido, mínimo 12 chars (sin requisitos de complejidad; lo valida Identity). No se hace trim
 - ArtistName: requerido, máximo 100 chars, se hace trim
 
-Los errores de validación de campo usan `ValidationProblemDetails` con claves de campo (`Email`, `ArtistName`).
+Los errores de validación de campo usan `ValidationProblemDetails` (`application/problem+json`) con claves de campo consistentes: `Email`, `ArtistName` y `Password` (en login) o `RefreshToken` (en refresh).
 
 **Response 201:**
 ```json
@@ -89,8 +89,8 @@ Los errores de validación de campo usan `ValidationProblemDetails` con claves d
 ```
 
 **Errores:**
-- 400: Datos inválidos
-- 409: Email ya registrado (case-insensitive)
+- 400: Datos inválidos (`ValidationProblemDetails`)
+- 409: Email ya registrado (case-insensitive), cuerpo `ProblemDetails` con `application/problem+json` (solo violación de unicidad de email; otras violaciones de integridad no se traducen a 409)
 - 429: Rate limit excedido (5/min por IP del cliente)
 
 ---
@@ -121,7 +121,8 @@ Inicia sesión y obtiene tokens.
 - Usa tokens bearer opacos nativos de ASP.NET Core Identity
 
 **Errores:**
-- 401: Credenciales inválidas o cuenta suspendida (mensaje genérico)
+- 400: Datos inválidos (`ValidationProblemDetails`; email con formato inválido o password vacío)
+- 401: Credenciales inválidas, bloqueo por intentos fallidos o cuenta suspendida (mensaje genérico idéntico en todos los casos)
 - 429: Rate limit excedido (10/min por IP del cliente)
 
 ---
@@ -144,7 +145,8 @@ Renueva el par de tokens.
 - Valida security stamp: si cambia, el refresh es rechazado
 
 **Errores:**
-- 401: Token inválido, expirado, security stamp cambiado, usuario suspendido
+- 400: `refreshToken` vacío o ausente (`ValidationProblemDetails`, clave `RefreshToken`)
+- 401: Token inválido, manipulado, expirado, security stamp cambiado o usuario suspendido (nunca 500)
 - 429: Rate limit excedido (20/min por IP del cliente)
 
 ---
@@ -167,8 +169,8 @@ Authorization: Bearer <accessToken>
 ```
 
 **Errores:**
-- 401: Sin token, token inválido o expirado
-- 403: Cuenta suspendida (aunque el token no haya expirado)
+- 401: Sin token, token inválido o expirado (cuerpo ProblemDetails `application/problem+json`; el challenge conserva `WWW-Authenticate`)
+- 403: Cuenta suspendida (aunque el token no haya expirado; también ProblemDetails)
 
 ---
 
@@ -177,7 +179,7 @@ Authorization: Bearer <accessToken>
 **Identity Options:**
 - Password mínimo: 12 caracteres
 - Sin requisitos de complejidad (dígitos, mayúsculas, símbolos)
-- Lockout: 5 intentos fallidos -> 15 min de bloqueo
+- Lockout: 5 intentos fallidos -> 15 min de bloqueo. En .NET 10, al activarse el bloqueo `UserManager.AccessFailedAsync` reinicia `AccessFailedCount` a 0 y el estado queda en `LockoutEnd`
 - Email único normalizado (case-insensitive)
 
 **Token Options:**
@@ -203,6 +205,8 @@ Authorization: Bearer <accessToken>
 - El límite por IP es independiente del bloqueo por cuenta de Identity (5 intentos fallidos → 15 min), que sigue aplicándose por usuario.
 
 **Respuesta 429:** cuerpo `ProblemDetails` con `Content-Type: application/problem+json` y cabecera `Retry-After` (segundos hasta la siguiente ventana), emitidos por `OnRejected`.
+
+**Respuestas 401/403 sin cuerpo:** un middleware en `Program.cs` las completa con `ProblemDetails` RFC 9457 (`application/problem+json`) vía `IProblemDetailsService`, sin sobrescribir respuestas que ya lleven cuerpo. El challenge bearer añade `WWW-Authenticate`.
 
 **Política ActiveDj:** Requiere DJ con `Estado = "activo"` en endpoints protegidos. Los schemes por defecto (authenticate/challenge/forbid) apuntan al scheme bearer.
 
