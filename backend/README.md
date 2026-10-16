@@ -23,11 +23,19 @@ dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=127.0.0.1;Po
 ASP.NET Core **no** carga `.env` automáticamente. ConnectionStrings se leen desde User Secrets o variables de entorno.
 
 ### 3. Revisar migración y SQL
-La migración `InitialCore` y su SQL de revisión ya fueron generados:
+Las migraciones y su SQL de revisión ya fueron generados:
 - Migraciones: `backend/src/DjRequests.Api/Persistence/Migrations/`
-- SQL idempotente (revisión): `backend/artifacts/InitialCore.sql`
+- SQL idempotente (revisión): `backend/artifacts/InitialCore.sql` y `backend/artifacts/SalaVersionConcurrencyToken.sql`
 
-**Estado de la migración:** la migración `20261006034357_InitialCore` **ya fue aplicada** a `dj_requests` localmente por el usuario (confirmación: `Done.`). Aplicación local confirmada por el usuario; esta información no procede de una verificación de esta ejecución. No volver a aplicarla ni modificar la migración inicial.
+**Estado de las migraciones:**
+- `20261006034357_InitialCore` **ya fue aplicada** a `dj_requests` localmente por el usuario (confirmación: `Done.`). No volver a aplicarla ni modificarla.
+- `20261016003450_SalaVersionConcurrencyToken` fue generada con la Tarea 03 ( Rooms ) y **aún no aplicada**. Es una migración **vacía** (Up/Down sin operaciones): `IsConcurrencyToken()` sobre `salas.version` (bigint) es una anotación de modelo de EF Core, no genera DDL. Solo añade el registro en `__EFMigrationsHistory` y actualiza el snapshot. El SQL de revisión correspondiente está en `backend/artifacts/SalaVersionConcurrencyToken.sql`.
+
+Aplicar esta migración pendiente (cuando el usuario lo decida, tras revisar el SQL):
+```cmd
+cd C:\Users\juand\dj-requests\backend\src\DjRequests.Api
+dotnet ef database update --migration SalaVersionConcurrencyToken
+```
 
 ### 4. Aplicar migraciones futuras (si las hubiera)
 ```cmd
@@ -224,6 +232,120 @@ En Docker: montar volumen en `/root/.aspnet/DataProtection-Keys` o configurar `P
 - Recuperación de contraseña
 - Logout y gestión de sesiones por dispositivo
 - Revocación individual de refresh tokens
+
+## Rooms Endpoints
+
+Todos los endpoints de salas están bajo `/api/rooms`, requieren autenticación bearer (`Authorization: Bearer <accessToken>`) y la política `ActiveDj` (cuenta con `estado = "activo"`). Sin token → 401; cuenta suspendida → 403. Los errores de validación usan `ValidationProblemDetails`; los conflictos y no encontrados usan `ProblemDetails` (`application/problem+json`).
+
+**Endpoints:** `POST /api/rooms`, `GET /api/rooms`, `GET /api/rooms/{id}`, `PUT /api/rooms/{id}`, `PATCH /api/rooms/{id}/state`.
+
+### Contrato de fechas (startsAt, endsAt)
+
+`startsAt` y `endsAt` son **ISO 8601 con offset explícito obligatorio**: terminan en `Z` (UTC) o llevan offset numérico `±HH:mm` / `±HHmm`.
+
+| Entrada | Resultado |
+|---|---|
+| `2026-11-13T21:00:00-06:00` | válido |
+| `2026-11-14T03:00:00Z` | válido; mismo instante que el anterior |
+| `2026-11-13T21:00:00` | **400** — sin offset explícito |
+| fecha inválida | 400 |
+| omitida o null | 400 |
+
+- El offset determina el **instante**; se normaliza a UTC al persistir (`DateTimeOffset` en entidades y respuestas).
+- `timezone` determina cómo se **presenta** ese instante al usuario; no se exige coincidencia con el offset recibido (una fecha en `Z` es válida para un evento en `America/Mexico_City`).
+- El parsing es estricto en los endpoints; no se usa la zona local del servidor.
+- Se conservan las validaciones de orden (`endsAt > startsAt`), caducidad (`endsAt > now`) y desbordamiento de `purgeAt`.
+
+### POST /api/rooms
+Crea una sala para el DJ autenticado.
+
+**Request:**
+```json
+{
+  "name": "Mi Fiesta",
+  "startsAt": "2026-12-01T20:00:00-06:00",
+  "endsAt": "2026-12-02T02:00:00-06:00",
+  "timezone": "America/Mexico_City"
+}
+```
+
+- `name`: obligatorio, 1–120 chars tras trim (no puede quedar vacío).
+- `startsAt` / `endsAt`: obligatorios, ISO 8601 con offset explícito (ver contrato de fechas arriba). `endsAt` debe ser mayor que `startsAt` y posterior al momento actual.
+- `timezone`: identificador IANA (validado con `TimeZoneInfo.TryConvertIanaIdToWindowsId`; se rechazan IDs Windows y desconocidos). **Omitido** → default `America/Mexico_City`; **vacío o inválido** → 400. Nunca hay fallback silencioso a UTC.
+
+**Response 201** (`Location: /api/rooms/{id}`): todos los campos de la sala, con valores asignados por servidor:
+- `id` y `codigo` generados por servidor (código de 10 caracteres de `[A-HJ-NP-Z2-9]`, sin I/O/0/1, generador criptográfico con reintento ante colisión).
+- `estado`: `"abierta"`; `version`: `1`; `maxSolicitudesSesion`: 10; `maxPlaylistsSesion`: 2; `intervaloEnvioSegundos`: 30.
+- `purgeAt`: `endsAt + 168 horas` exactas.
+- `hasEnded` / `canReceiveRequests`: indicadores calculados con el servidor.
+- `inviteUrl`: `{Frontend:BaseUrl}/join/{codigo}` (la base URL es configuración, no se deriva del header Host).
+
+Campos extra enviados por el cliente (`id`, `codigo`, `estado`, `djId`, `version`, `purgeAt`, etc.) se **ignoran**: nunca controlan valores de servidor.
+
+**Errores:** 400 (`ValidationProblemDetails`, claves `Name`, `StartsAt`, `EndsAt`, `Timezone`); 409 si no se puede generar código único tras 5 intentos.
+
+### GET /api/rooms?page=1&pageSize=20
+Lista las salas del DJ autenticado, excluyendo las purgadas (`purge_at > now`). Orden: `created_at` descendente. `page >= 1`; `pageSize` entre 1 y 100 (fuera de rango → 400).
+
+### GET /api/rooms/{id}
+Detalle de una sala propia, no purgada (`purge_at > now`). Sala ajena o purgada → 404 (mismo detalle, sin filtrar existencia). Después del fin pero antes de purge: 200 con `hasEnded: true`.
+
+### PUT /api/rooms/{id}
+Reprograma una sala. **Sin actualizaciones parciales**: requiere **todos** los campos.
+
+**Request:**
+```json
+{
+  "version": 1,
+  "name": "Sala Renombrada",
+  "startsAt": "2026-12-01T21:00:00-06:00",
+  "endsAt": "2026-12-02T03:00:00-06:00",
+  "timezone": "Europe/Madrid"
+}
+```
+
+- `timezone` es **obligatoria** en PUT (sin default).
+- `startsAt` / `endsAt` siguen el contrato de fechas (offset explícito obligatorio).
+- `purgeAt` se recalcula como `endsAt + 168h`.
+- `codigo`, `estado` y columnas de límites no cambian.
+
+**Concurrencia:** transacción explícita + bloqueo de fila `SELECT ... FOR UPDATE`; se revalidan propiedad, versión y fechas bajo el bloqueo. `version` distinta a la actual → 409. Dos PUT con la misma versión: exactamente uno 200 y otro 409, sin pérdida de datos.
+
+**Errores:** 400 (validaciones); 404 (sala ajena/purgada); 409 (versión obsoleta, evento ya finalizado — `now >= endsAt`, o colisión de concurrencia).
+
+### PATCH /api/rooms/{id}/state
+Cambia el estado de una sala propia.
+
+**Request:**
+```json
+{ "state": "pausada", "version": 1 }
+```
+
+- `state` permitido: `abierta`, `pausada`, `cerrada`. Transiciones entre estos tres estados permitidas antes del fin del evento; después del fin → 409.
+- Mismo estado con versión válida → 200 con el estado actual **sin** incrementar `version`.
+- Cambio de estado incrementa `version` y `updatedAt`; conserva fechas y `purgeAt`.
+- Mismo mecanismo de transacción + `FOR UPDATE` y revalidación que PUT. Versión obsoleta → 409.
+
+### Configuración Frontend (inviteUrl)
+```json
+"Frontend": {
+  "BaseUrl": "https://localhost:3000"
+}
+```
+- `appsettings.json`: `https://localhost:3000` (producción, HTTPS).
+- `appsettings.Development.json`: `http://localhost:3000` (solo desarrollo).
+- No se deriva del header Host. QR fuera de alcance.
+
+### Límites de sesión (asignados por servidor)
+| Columna | Valor |
+|---|---|
+| max_solicitudes_sesion | 10 |
+| max_playlists_sesion | 2 |
+| intervalo_envio_segundos | 30 |
+
+No son editables vía API en esta tarea.
+
+---
 
 ## Notas
 - EF Core Migrations es la fuente ejecutable del esquema. No se duplica DDL en scripts de init de Docker.

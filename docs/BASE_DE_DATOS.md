@@ -1,6 +1,6 @@
 # Diseño de datos — propuesta técnica v1
 
-PostgreSQL 17, esquema public. Fuente ejecutable: migraciones EF Core, todavía no creadas ni aplicadas. Este documento diseña el modelo; no representa una base ya implementada. UUID para PK; timestamptz para fechas UTC; snake_case en tablas/columnas. NOT NULL salvo marcado nullable. Longitudes se validan también en API. Restricciones con nombres explícitos.
+PostgreSQL 17, esquema public. Fuente ejecutable: migraciones EF Core. `20261006034357_InitialCore` fue aplicada localmente a `dj_requests` por el usuario; `20261016003450_SalaVersionConcurrencyToken` (vacía: solo anota `version` de `salas` como concurrency token en el modelo) fue generada con la Tarea 03 y **aún no aplicada**; SQL de revisión en `backend/artifacts/SalaVersionConcurrencyToken.sql`. Este documento diseña el modelo. UUID para PK; timestamptz para fechas UTC; snake_case en tablas/columnas. NOT NULL salvo marcado nullable. Longitudes se validan también en API. Restricciones con nombres explícitos.
 
 ## 1. djs — identidad permanente
 Mapear DjAccount : IdentityUser<Guid> a djs. Conservar todas las propiedades necesarias de Identity (normalización, password_hash, security_stamp, concurrency_stamp, email_confirmed, bloqueo, intentos fallidos y campos de teléfono/2FA), aunque la UI inicial no use todas. No sustituirlas por un password varchar propio.

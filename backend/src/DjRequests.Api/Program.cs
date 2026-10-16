@@ -5,6 +5,9 @@ using DjRequests.Api.Modules.Accounts.Endpoints;
 using DjRequests.Api.Modules.Accounts.Options;
 using DjRequests.Api.Modules.Accounts.Policies;
 using DjRequests.Api.Modules.Health;
+using DjRequests.Api.Modules.Rooms.Options;
+using DjRequests.Api.Modules.Rooms.Services;
+using DjRequests.Api.Modules.Rooms.Endpoints;
 using DjRequests.Api.Persistence;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.BearerToken;
@@ -66,6 +69,9 @@ builder.Services.AddScoped<IAuthorizationHandler, ActiveDjHandler>();
 builder.Services.Configure<AuthRateLimitOptions>(
     builder.Configuration.GetSection("AuthRateLimits"));
 
+builder.Services.Configure<FrontendUrlOptions>(
+    builder.Configuration.GetSection(FrontendUrlOptions.SectionName));
+
 builder.Services.AddRateLimiter(options =>
 {
     var authOptions = builder.Configuration.GetSection("AuthRateLimits").Get<AuthRateLimitOptions>()
@@ -120,6 +126,9 @@ builder.Services.AddRateLimiter(options =>
 });
 
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton<IRoomCodeGenerator, RoomCodeGenerator>();
+builder.Services.Configure<TimeZoneValidatorOptions>(
+    config => config.DefaultTimezone = "America/Mexico_City");
 builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();
@@ -176,6 +185,9 @@ app.MapHealthEndpoints();
 
 // Map auth endpoints
 app.MapAuthEndpoints();
+
+// Register rooms endpoints
+app.MapRoomEndpoints();
 
 app.Run();
 public partial class Program { }

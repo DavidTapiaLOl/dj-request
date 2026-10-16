@@ -1,0 +1,175 @@
+@baseUrl = http://localhost:5000
+@accessToken = PEGAR_AQUÍ_ACCESS_TOKEN
+@roomId = PEGAR_AQUÍ_GUID_SALA
+@roomVersion = 1
+
+### Registrar DJ (si no hay sesión)
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "dj@example.com",
+  "password": "passphrase-de-12-chars-minimo",
+  "artistName": "DJ Example"
+}
+
+### Iniciar sesión y obtener token
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "dj@example.com",
+  "password": "passphrase-de-12-chars-minimo"
+}
+
+### Crear sala
+POST {{baseUrl}}/api/rooms
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Mi Fiesta",
+  "startsAt": "2026-12-01T20:00:00-06:00",
+  "endsAt": "2026-12-02T02:00:00-06:00",
+  "timezone": "America/Mexico_City"
+}
+
+### Crear sala con timezone omitida (usa default America/Mexico_City)
+POST {{baseUrl}}/api/rooms
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Sala sin timezone",
+  "startsAt": "2026-12-01T20:00:00-06:00",
+  "endsAt": "2026-12-02T02:00:00-06:00"
+}
+
+### Crear sala con timezone inválida (esperado: 400)
+POST {{baseUrl}}/api/rooms
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Sala tz inválida",
+  "startsAt": "2026-12-01T20:00:00-06:00",
+  "endsAt": "2026-12-02T02:00:00-06:00",
+  "timezone": "Invalid/Zone"
+}
+
+### Crear sala con timezone Windows (esperado: 400)
+POST {{baseUrl}}/api/rooms
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Sala tz Windows",
+  "startsAt": "2026-12-01T20:00:00-06:00",
+  "endsAt": "2026-12-02T02:00:00-06:00",
+  "timezone": "Central Standard Time"
+}
+
+### Listar salas (paginado)
+GET {{baseUrl}}/api/rooms?page=1&pageSize=20
+Authorization: Bearer {{accessToken}}
+
+### Detalle de sala
+GET {{baseUrl}}/api/rooms/{{roomId}}
+Authorization: Bearer {{accessToken}}
+
+### Reprogramar sala (requiere todos los campos, sin parciales)
+PUT {{baseUrl}}/api/rooms/{{roomId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "version": {{roomVersion}},
+  "name": "Sala Renombrada",
+  "startsAt": "2026-12-01T21:00:00-06:00",
+  "endsAt": "2026-12-02T03:00:00-06:00",
+  "timezone": "Europe/Madrid"
+}
+
+### Reprogramar con versión obsoleta (esperado: 409)
+PUT {{baseUrl}}/api/rooms/{{roomId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "version": 999,
+  "name": "Sala Renombrada",
+  "startsAt": "2026-12-01T21:00:00-06:00",
+  "endsAt": "2026-12-02T03:00:00-06:00",
+  "timezone": "Europe/Madrid"
+}
+
+### Pausar sala
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/state
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "state": "pausada",
+  "version": {{roomVersion}}
+}
+
+### Reabrir sala
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/state
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "state": "abierta",
+  "version": {{roomVersion}}
+}
+
+### Cerrar sala
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/state
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "state": "cerrada",
+  "version": {{roomVersion}}
+}
+
+### Cambio de estado con versión obsoleta (esperado: 409)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/state
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "state": "pausada",
+  "version": 999
+}
+
+### Estado inválido (esperado: 400)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/state
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "state": "invalida",
+  "version": {{roomVersion}}
+}
+
+### Sin token (esperado: 401)
+GET {{baseUrl}}/api/rooms
+
+### Campos extra del cliente se ignoran en creación
+POST {{baseUrl}}/api/rooms
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Sala Manip",
+  "startsAt": "2026-12-01T20:00:00-06:00",
+  "endsAt": "2026-12-02T02:00:00-06:00",
+  "timezone": "America/Mexico_City",
+  "id": "11111111-1111-1111-1111-111111111111",
+  "codigo": "MANIPCODE1",
+  "estado": "cerrada",
+  "djId": "22222222-2222-2222-2222-222222222222",
+  "version": 99,
+  "purgeAt": "2026-12-08T00:00:00+00:00"
+}

@@ -343,6 +343,7 @@ namespace DjRequests.Api.Persistence.Migrations
                         .HasColumnName("updated_at");
 
                     b.Property<long>("Version")
+                        .IsConcurrencyToken()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
                         .HasDefaultValue(1L)

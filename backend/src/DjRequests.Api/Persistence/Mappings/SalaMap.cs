@@ -24,7 +24,7 @@ public class SalaMap : IEntityTypeConfiguration<Sala>
         builder.Property(e => e.MaxSolicitudesSesion).HasColumnName("max_solicitudes_sesion").HasDefaultValue(10).IsRequired();
         builder.Property(e => e.MaxPlaylistsSesion).HasColumnName("max_playlists_sesion").HasDefaultValue(2).IsRequired();
         builder.Property(e => e.IntervaloEnvioSegundos).HasColumnName("intervalo_envio_segundos").HasDefaultValue(30).IsRequired();
-        builder.Property(e => e.Version).HasColumnName("version").HasDefaultValue(1).IsRequired();
+        builder.Property(e => e.Version).HasColumnName("version").HasDefaultValue(1).IsRequired().IsConcurrencyToken();
         builder.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
         

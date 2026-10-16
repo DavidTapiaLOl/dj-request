@@ -1,8 +1,9 @@
-﻿# DJ Requests — Estado de la tarea 02
+﻿# DJ Requests — Estado de la tarea 03
 
 ## Resumen
 - Tarea 01: estructura del backend, modelo de datos, migración inicial y SQL de revisión. La migración `20261006034357_InitialCore` fue aplicada localmente a `dj_requests` por el usuario (confirmación: `Done.`).
 - Tarea 02: autenticación de DJs — endpoints, Identity, tokens, rate limiting por IP, tests.
+- Tarea 03: creación y gestión de salas del DJ — endpoints `/api/rooms` (CREATE, LIST, GET, PUT, PATCH state) con validación estricta, concurrencia con `FOR UPDATE`, código criptográfico, zona horaria IANA, inviteUrl configurable, pruebas de integración y migración de concurrencia.
 
 ## Versiones fijadas
 | Paquete | Versión | Notas |
@@ -74,6 +75,56 @@ dotnet test backend\DjRequests.slnx --no-build --filter "<filtro por test fallid
 - Logout y gestión de sesiones por dispositivo — fuera de alcance.
 - Revocación individual de refresh tokens — fuera de alcance.
 - Rotación de refresh token de un solo uso — documentada como limitación.
+
+## Archivos creados/modificados (Tarea 03)
+- `backend/src/DjRequests.Api/Modules/Rooms/Dtos/CreateRoomRequest.cs`
+- `backend/src/DjRequests.Api/Modules/Rooms/Dtos/RoomResponse.cs`
+- `backend/src/DjRequests.Api/Modules/Rooms/Dtos/UpdateRoomRequest.cs`
+- `backend/src/DjRequests.Api/Modules/Rooms/Dtos/UpdateRoomStateRequest.cs`
+- `backend/src/DjRequests.Api/Modules/Rooms/Endpoints/RoomEndpoints.cs`
+- `backend/src/DjRequests.Api/Modules/Rooms/Services/IRoomCodeGenerator.cs`
+- `backend/src/DjRequests.Api/Modules/Rooms/Services/RoomCodeGenerator.cs`
+- `backend/src/DjRequests.Api/Modules/Rooms/Services/TimeZoneValidator.cs`
+- `backend/src/DjRequests.Api/Modules/Rooms/Options/FrontendUrlOptions.cs`
+- `backend/src/DjRequests.Api/Program.cs` (DI de `IRoomCodeGenerator` y `FrontendUrlOptions`; `MapRoomEndpoints()`)
+- `backend/src/DjRequests.Api/appsettings.json` y `appsettings.Development.json` (sección `Frontend:BaseUrl`)
+- `backend/src/DjRequests.Api/Persistence/Mappings/SalaMap.cs` (`Version` con `IsConcurrencyToken()`)
+- `backend/src/DjRequests.Api/Persistence/Migrations/20261016003450_SalaVersionConcurrencyToken.cs` (+ Designer, snapshot actualizado)
+- `backend/artifacts/SalaVersionConcurrencyToken.sql` (SQL idempotente de revisión, generado)
+- `backend/tests/DjRequests.IntegrationTests/Modules/Rooms/RoomEndpointsTests.cs` (50 pruebas, incluye 6 de offset explícito)
+- `backend/src/DjRequests.Api/Rooms.http` (ejemplos)
+- `backend/README.md` (sección Rooms Endpoints y estado de migraciones)
+- `docs/ESTADO.md` (este archivo)
+- `docs/BASE_DE_DATOS.md` (cabecera actualizada con estado de migraciones)
+
+## Comandos ejecutados (Tarea 03)
+```cmd
+dotnet build backend\DjRequests.slnx --no-restore
+dotnet test backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-build --filter "FullyQualifiedName~RoomEndpointsTests"
+dotnet test backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-build
+dotnet ef migrations add SalaVersionConcurrencyToken
+dotnet ef migrations script 20261006034357_InitialCore 20261016003450_SalaVersionConcurrencyToken --idempotent --output backend\artifacts\SalaVersionConcurrencyToken.sql
+```
+
+## Resultados (Tarea 03)
+- **Build**: exitoso, 0 errores, 1 advertencia preexistente (CS0618 en `DatabaseFixture.cs`).
+- **Tests Rooms**: 50/50 en verde (creación, listado, detalle, reprogramación, cambio de estado, aislamiento entre DJs, purga, caducidad, versiones obsoletas, concurrencia con PUT simultáneo, validaciones de nombre/fechas/zona horaria, DJ suspendido 403, sin token 401, y 6 pruebas de offset explícito).
+- **Suite completa**: 114/114 en verde (50 Rooms + 64 resto: 15 SchemaTests + 41 AuthEndpointsTests + 8 RateLimitingTests), ~32 s, Docker disponible con Testcontainers PostgreSQL 17. 0 fallidas, 0 omitidas.
+- **Endpoints**:
+  - `POST /api/rooms` — 201 con id, código de 10 chars (`[A-HJ-NP-Z2-9]`, RNG criptográfico con reintento), `estado=abierta`, `version=1`, `purgeAt=endsAt+168h`, `inviteUrl={Frontend:BaseUrl}/join/{codigo}`. Timezone IANA validada con `TimeZoneInfo.TryConvertIanaIdToWindowsId`; omitida → `America/Mexico_City`; vacía/inválida/Windows → 400. Campos extra del cliente se ignoran.
+  - `GET /api/rooms` — 200, lista propia con paginación (`page>=1`, `pageSize` 1–100), excluye purgadas.
+  - `GET /api/rooms/{id}` — 200/404 (ajena o purgada → 404 sin revelar existencia).
+  - `PUT /api/rooms/{id}` — 200 requiere todos los campos (sin parciales); `timezone` obligatoria; recalcula `purgeAt`; conserva código/estado/límites; transacción + `SELECT ... FOR UPDATE` con revalidación; versión obsoleta o evento finalizado → 409. Dos PUT con la misma versión → exactamente 1×200 + 1×409, sin pérdida de datos.
+  - `PATCH /api/rooms/{id}/state` — 200; transiciones `abierta`/`pausada`/`cerrada` antes del fin; mismo estado con versión válida → 200 sin incrementar versión; después del fin → 409; mismo mecanismo de bloqueo que PUT.
+- **Contrato de fechas (offset explícito)**: `startsAt`/`endsAt` son ISO 8601 con offset obligatorio (`Z` o `±HH:mm`/`±HHmm`); validado en endpoint con `TryParseDateTimeOffsetWithOffset` antes de normalizar a UTC. Fecha sin offset → 400 con error de campo (`StartsAt`/`EndsAt`); inválida, omitida o null → 400. El offset determina el instante; `timezone` determina la presentación y no se exige coincidencia. `NormalizeToUtc` eliminada (parsing estricto retorna UTC directamente). Se conservan validaciones de orden, caducidad y desbordamiento. PUT inválido no modifica la sala ni su versión.
+- **Concurrencia**: `SalaMap` marca `Version` como `IsConcurrencyToken()`; endpoints usan transacción + bloqueo de fila con revalidación de propiedad, versión y fechas.
+- **inviteUrl**: base URL de frontend configurable vía `Frontend:BaseUrl` (appsettings); no se deriva del header Host; `TrimEnd('/')` y ruta `/join/{codigo}`.
+- **Migración**: `20261016003450_SalaVersionConcurrencyToken` generada (vacía: solo anotación de modelo, sin DDL); snapshot actualizado con `IsConcurrencyToken` en `salas.version`; SQL idempotente exportado a `backend/artifacts/SalaVersionConcurrencyToken.sql`. **Aún no aplicada** a ninguna base (los tests usan bases desechables; `dj_requests` no fue tocada).
+
+## Pendientes (Tarea 03)
+- Aplicar `SalaVersionConcurrencyToken` a `dj_requests` (decisión del usuario, tras revisar el SQL; vacía, solo bookkeeping).
+- QR del inviteUrl: fuera de alcance.
+- Límites de sesión (`max_solicitudes_sesion`, `max_playlists_sesion`, `intervalo_envio_segundos`): asignados por servidor, no editables vía API en esta tarea.
 
 ## Notas
 - Migración `20261006034357_InitialCore` aplicada localmente a `dj_requests` por el usuario (confirmación: `Done.`). Aplicación local confirmada por el usuario, no verificada por esta ejecución. No reaplicar ni modificar la migración inicial.
