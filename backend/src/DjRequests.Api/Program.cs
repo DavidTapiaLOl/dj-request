@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -69,8 +70,10 @@ builder.Services.AddScoped<IAuthorizationHandler, ActiveDjHandler>();
 builder.Services.Configure<AuthRateLimitOptions>(
     builder.Configuration.GetSection("AuthRateLimits"));
 
-builder.Services.Configure<FrontendUrlOptions>(
-    builder.Configuration.GetSection(FrontendUrlOptions.SectionName));
+builder.Services.AddOptions<FrontendUrlOptions>()
+    .Bind(builder.Configuration.GetSection(FrontendUrlOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<FrontendUrlOptions>, FrontendUrlOptionsValidator>();
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -129,6 +132,18 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IRoomCodeGenerator, RoomCodeGenerator>();
 builder.Services.Configure<TimeZoneValidatorOptions>(
     config => config.DefaultTimezone = "America/Mexico_City");
+
+// Verificar que la zona horaria predeterminada este disponible en el sistema
+try
+{
+    TimeZoneInfo.FindSystemTimeZoneById("America/Mexico_City");
+}
+catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+{
+    throw new InvalidOperationException(
+        "La zona horaria predeterminada 'America/Mexico_City' no esta disponible en el sistema.", ex);
+}
+
 builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();

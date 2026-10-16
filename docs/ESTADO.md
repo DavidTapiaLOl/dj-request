@@ -86,39 +86,45 @@ dotnet test backend\DjRequests.slnx --no-build --filter "<filtro por test fallid
 - `backend/src/DjRequests.Api/Modules/Rooms/Services/RoomCodeGenerator.cs`
 - `backend/src/DjRequests.Api/Modules/Rooms/Services/TimeZoneValidator.cs`
 - `backend/src/DjRequests.Api/Modules/Rooms/Options/FrontendUrlOptions.cs`
-- `backend/src/DjRequests.Api/Program.cs` (DI de `IRoomCodeGenerator` y `FrontendUrlOptions`; `MapRoomEndpoints()`)
+- `backend/src/DjRequests.Api/Modules/Rooms/Options/FrontendUrlOptionsValidator.cs` (validación de `Frontend:BaseUrl` al arrancar)
+- `backend/src/DjRequests.Api/Program.cs` (DI de `IRoomCodeGenerator`, `FrontendUrlOptions` con `ValidateOnStart` + validador, verificación de zona default; `MapRoomEndpoints()`)
 - `backend/src/DjRequests.Api/appsettings.json` y `appsettings.Development.json` (sección `Frontend:BaseUrl`)
 - `backend/src/DjRequests.Api/Persistence/Mappings/SalaMap.cs` (`Version` con `IsConcurrencyToken()`)
 - `backend/src/DjRequests.Api/Persistence/Migrations/20261016003450_SalaVersionConcurrencyToken.cs` (+ Designer, snapshot actualizado)
 - `backend/artifacts/SalaVersionConcurrencyToken.sql` (SQL idempotente de revisión, generado)
-- `backend/tests/DjRequests.IntegrationTests/Modules/Rooms/RoomEndpointsTests.cs` (50 pruebas, incluye 6 de offset explícito)
+- `backend/tests/DjRequests.IntegrationTests/Modules/Rooms/RoomEndpointsTests.cs` (70 pruebas: 6 offset explícito, 3 colisiones de código, overflow, parser estricto, contrato PUT/PATCH, pausa bajo bloqueo)
+- `backend/tests/DjRequests.IntegrationTests/Modules/Rooms/RoomOptionsValidationTests.cs` (15 pruebas unitarias de `FrontendUrlOptionsValidator` y `TimeZoneValidator`)
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/SequenceCodeGenerator.cs` (generadores deterministas para tests de colisión)
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/RoomLockPauseInterceptor.cs` (pausa en `FOR UPDATE` para revalidación post-lock)
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/WebAppFactory.cs` (soporte de `CustomCodeGenerator` y `EnableRoomLockPause`)
 - `backend/src/DjRequests.Api/Rooms.http` (ejemplos)
 - `backend/README.md` (sección Rooms Endpoints y estado de migraciones)
 - `docs/ESTADO.md` (este archivo)
 - `docs/BASE_DE_DATOS.md` (cabecera actualizada con estado de migraciones)
 
-## Comandos ejecutados (Tarea 03)
+## Comandos ejecutados (corrección de revisión)
 ```cmd
-dotnet build backend\DjRequests.slnx --no-restore
-dotnet test backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-build --filter "FullyQualifiedName~RoomEndpointsTests"
-dotnet test backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-build
-dotnet ef migrations add SalaVersionConcurrencyToken
-dotnet ef migrations script 20261006034357_InitialCore 20261016003450_SalaVersionConcurrencyToken --idempotent --output backend\artifacts\SalaVersionConcurrencyToken.sql
+dotnet build backend\src\DjRequests.Api\DjRequests.Api.csproj --no-restore
+dotnet build backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-restore
+dotnet test backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-build --filter "FullyQualifiedName~Modules.Rooms"
+dotnet test backend\DjRequests.slnx --no-build
 ```
 
-## Resultados (Tarea 03)
+## Resultados (corrección de revisión — commit 6b638cf)
 - **Build**: exitoso, 0 errores, 1 advertencia preexistente (CS0618 en `DatabaseFixture.cs`).
-- **Tests Rooms**: 50/50 en verde (creación, listado, detalle, reprogramación, cambio de estado, aislamiento entre DJs, purga, caducidad, versiones obsoletas, concurrencia con PUT simultáneo, validaciones de nombre/fechas/zona horaria, DJ suspendido 403, sin token 401, y 6 pruebas de offset explícito).
-- **Suite completa**: 114/114 en verde (50 Rooms + 64 resto: 15 SchemaTests + 41 AuthEndpointsTests + 8 RateLimitingTests), ~32 s, Docker disponible con Testcontainers PostgreSQL 17. 0 fallidas, 0 omitidas.
+- **Tests Rooms**: 85/85 en verde (70 endpoints + 15 unitarios de validadores). Incluye: 3 de colisión real de código (reintento 23505, agotamiento 409, concurrentes sin 500), overflow de `purgeAt` en POST y PUT, revalidación post-lock con pausa determinista en `FOR UPDATE`, parser estricto (texto extra y fecha sin hora → 400), timezone omitida en PUT → default, versiones `0`/negativas → 400 en PUT y PATCH, overflow de paginación, y validadores de `Frontend:BaseUrl`/`TimeZoneValidator`.
+- **Suite completa**: 149/149 en verde (85 Rooms + 64 resto: 15 SchemaTests + 41 AuthEndpointsTests + 8 RateLimitingTests), ~40 s, Docker disponible con Testcontainers PostgreSQL 17. 0 fallidas, 0 omitidas.
 - **Endpoints**:
-  - `POST /api/rooms` — 201 con id, código de 10 chars (`[A-HJ-NP-Z2-9]`, RNG criptográfico con reintento), `estado=abierta`, `version=1`, `purgeAt=endsAt+168h`, `inviteUrl={Frontend:BaseUrl}/join/{codigo}`. Timezone IANA validada con `TimeZoneInfo.TryConvertIanaIdToWindowsId`; omitida → `America/Mexico_City`; vacía/inválida/Windows → 400. Campos extra del cliente se ignoran.
-  - `GET /api/rooms` — 200, lista propia con paginación (`page>=1`, `pageSize` 1–100), excluye purgadas.
+  - `POST /api/rooms` — 201 con id, código de 10 chars (`[A-HJ-NP-Z2-9]`, RNG criptográfico). Colisiones del índice único `IX_salas_codigo` se manejan por SQLSTATE `23505` en `SaveChangesAsync` con reintento (hasta 5 intentos); `estado=abierta`, `version=1`, `purgeAt=endsAt+168h` (pre-validado contra overflow), `inviteUrl={Frontend:BaseUrl}/join/{codigo}`. Timezone IANA validada con `TimeZoneInfo.TryConvertIanaIdToWindowsId`; omitida → `America/Mexico_City`; vacía/inválida/Windows → 400. Campos extra del cliente se ignoran.
+  - `GET /api/rooms` — 200, lista propia con paginación (`page>=1`, `pageSize` 1–100, `(page-1)*pageSize` protegido contra overflow), excluye purgadas.
   - `GET /api/rooms/{id}` — 200/404 (ajena o purgada → 404 sin revelar existencia).
-  - `PUT /api/rooms/{id}` — 200 requiere todos los campos (sin parciales); `timezone` obligatoria; recalcula `purgeAt`; conserva código/estado/límites; transacción + `SELECT ... FOR UPDATE` con revalidación; versión obsoleta o evento finalizado → 409. Dos PUT con la misma versión → exactamente 1×200 + 1×409, sin pérdida de datos.
-  - `PATCH /api/rooms/{id}/state` — 200; transiciones `abierta`/`pausada`/`cerrada` antes del fin; mismo estado con versión válida → 200 sin incrementar versión; después del fin → 409; mismo mecanismo de bloqueo que PUT.
-- **Contrato de fechas (offset explícito)**: `startsAt`/`endsAt` son ISO 8601 con offset obligatorio (`Z` o `±HH:mm`/`±HHmm`); validado en endpoint con `TryParseDateTimeOffsetWithOffset` antes de normalizar a UTC. Fecha sin offset → 400 con error de campo (`StartsAt`/`EndsAt`); inválida, omitida o null → 400. El offset determina el instante; `timezone` determina la presentación y no se exige coincidencia. `NormalizeToUtc` eliminada (parsing estricto retorna UTC directamente). Se conservan validaciones de orden, caducidad y desbordamiento. PUT inválido no modifica la sala ni su versión.
-- **Concurrencia**: `SalaMap` marca `Version` como `IsConcurrencyToken()`; endpoints usan transacción + bloqueo de fila con revalidación de propiedad, versión y fechas.
-- **inviteUrl**: base URL de frontend configurable vía `Frontend:BaseUrl` (appsettings); no se deriva del header Host; `TrimEnd('/')` y ruta `/join/{codigo}`.
+  - `PUT /api/rooms/{id}` — 200 requiere todos los campos (`timezone` puede omitirse → default `America/Mexico_City`); `version` positiva obligatoria (omitida/0/negativa → 400); recalcula `purgeAt`; conserva código/estado/límites; transacción + `SELECT ... FOR UPDATE`; `now` post-lock como única fuente de verdad; bajo bloqueo se revalida el nuevo `endsAt > now` (→400 si venció esperando el lock); versión obsoleta o evento finalizado → 409. Dos PUT con la misma versión → exactamente 1×200 + 1×409, sin pérdida de datos.
+  - `PATCH /api/rooms/{id}/state` — 200; `version` positiva obligatoria (0/negativa → 400); transiciones `abierta`/`pausada`/`cerrada` antes del fin; mismo estado con versión válida → 200 sin incrementar versión; después del fin → 409; mismo mecanismo de bloqueo que PUT.
+- **Contrato de fechas (offset explícito, parser estricto)**: `startsAt`/`endsAt` son ISO 8601 con offset obligatorio (`Z` o `±HH:mm`/`±HHmm`); parser `TryParseExact` con formatos estrictos (rechaza texto extra y fechas sin hora completa); `±HHmm` se normaliza a `±HH:mm` antes del parse. Validado en endpoint con `TryParseDateTimeOffsetWithOffset` antes de normalizar a UTC. Fecha sin offset, sin hora ni con basura → 400 con error de campo (`StartsAt`/`EndsAt`); inválida, omitida o null → 400. El offset determina el instante; `timezone` determina la presentación y no se exige coincidencia. Se conservan validaciones de orden, caducidad y desbordamiento (pre-validación: `endsAt > DateTimeOffset.MaxValue - 168h` → 400). PUT inválido no modifica la sala ni su versión.
+- **Colisiones de código**: sin preconsulta `AnyAsync`; el reintento se basa en el error real de PostgreSQL (SQLSTATE `23505` + constraint `IX_salas_codigo`), con `EntityState.Detached` para limpiar el tracker EF entre intentos. Errores de BD distintos no se convierten en colisiones.
+- **Concurrencia**: `SalaMap` marca `Version` como `IsConcurrencyToken()`; PUT usan transacción + bloqueo de fila con `now` post-lock; PATCH idéntico. Revalidación de propiedad, purgeAt, endsAt persistido, versión y nuevo endsAt.
+- **Zona horaria**: `InvalidTimeZoneException` ya no expone `ex.Message` al usuario; se lanza `SystemTimeZoneException` (error de servidor, no 400 de validación) distinta de `ValidationException` (error de usuario). La zona default `America/Mexico_City` se verifica al iniciar la API.
+- **inviteUrl**: base URL de frontend configurable vía `Frontend:BaseUrl`; validada al arrancar (`IValidateOptions` + `ValidateOnStart`): absoluta, sin credenciales/query/fragmento, HTTPS fuera de Development, HTTP solo loopback en Development. No se deriva del header Host; `TrimEnd('/')` y ruta `/join/{codigo}`.
 - **Migración**: `20261016003450_SalaVersionConcurrencyToken` generada (vacía: solo anotación de modelo, sin DDL); snapshot actualizado con `IsConcurrencyToken` en `salas.version`; SQL idempotente exportado a `backend/artifacts/SalaVersionConcurrencyToken.sql`. **Aún no aplicada** a ninguna base (los tests usan bases desechables; `dj_requests` no fue tocada).
 
 ## Pendientes (Tarea 03)

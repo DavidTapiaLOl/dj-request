@@ -241,20 +241,22 @@ Todos los endpoints de salas están bajo `/api/rooms`, requieren autenticación 
 
 ### Contrato de fechas (startsAt, endsAt)
 
-`startsAt` y `endsAt` son **ISO 8601 con offset explícito obligatorio**: terminan en `Z` (UTC) o llevan offset numérico `±HH:mm` / `±HHmm`.
+`startsAt` y `endsAt` son **ISO 8601 con offset explícito obligatorio**: terminan en `Z` (UTC) o llevan offset numérico `±HH:mm` / `±HHmm`. El parser es estricto (`TryParseExact`): exige fecha y hora completas con offset; no acepta texto extra ni formatos parciales.
 
 | Entrada | Resultado |
 |---|---|
 | `2026-11-13T21:00:00-06:00` | válido |
 | `2026-11-14T03:00:00Z` | válido; mismo instante que el anterior |
 | `2026-11-13T21:00:00` | **400** — sin offset explícito |
+| `2026-11-13` | **400** — sin hora ni offset |
+| `2026-11-13T21:00:00-06:00 basura` | **400** — texto extra |
 | fecha inválida | 400 |
 | omitida o null | 400 |
 
 - El offset determina el **instante**; se normaliza a UTC al persistir (`DateTimeOffset` en entidades y respuestas).
 - `timezone` determina cómo se **presenta** ese instante al usuario; no se exige coincidencia con el offset recibido (una fecha en `Z` es válida para un evento en `America/Mexico_City`).
 - El parsing es estricto en los endpoints; no se usa la zona local del servidor.
-- Se conservan las validaciones de orden (`endsAt > startsAt`), caducidad (`endsAt > now`) y desbordamiento de `purgeAt`.
+- Se conservan las validaciones de orden (`endsAt > startsAt`), caducidad (`endsAt > now`) y desbordamiento de `purgeAt` (pre-validación: `endsAt` no puede superar `DateTimeOffset.MaxValue - 168h`).
 
 ### POST /api/rooms
 Crea una sala para el DJ autenticado.
@@ -274,7 +276,7 @@ Crea una sala para el DJ autenticado.
 - `timezone`: identificador IANA (validado con `TimeZoneInfo.TryConvertIanaIdToWindowsId`; se rechazan IDs Windows y desconocidos). **Omitido** → default `America/Mexico_City`; **vacío o inválido** → 400. Nunca hay fallback silencioso a UTC.
 
 **Response 201** (`Location: /api/rooms/{id}`): todos los campos de la sala, con valores asignados por servidor:
-- `id` y `codigo` generados por servidor (código de 10 caracteres de `[A-HJ-NP-Z2-9]`, sin I/O/0/1, generador criptográfico con reintento ante colisión).
+- `id` y `codigo` generados por servidor (código de 10 caracteres de `[A-HJ-NP-Z2-9]`, sin I/O/0/1, generador criptográfico). Las colisiones del índice único `IX_salas_codigo` se detectan por SQLSTATE `23505` en `SaveChangesAsync` y se reintentan con un código nuevo (hasta 5 intentos); no se preconsultan códigos con `AnyAsync`.
 - `estado`: `"abierta"`; `version`: `1`; `maxSolicitudesSesion`: 10; `maxPlaylistsSesion`: 2; `intervaloEnvioSegundos`: 30.
 - `purgeAt`: `endsAt + 168 horas` exactas.
 - `hasEnded` / `canReceiveRequests`: indicadores calculados con el servidor.
@@ -291,7 +293,7 @@ Lista las salas del DJ autenticado, excluyendo las purgadas (`purge_at > now`). 
 Detalle de una sala propia, no purgada (`purge_at > now`). Sala ajena o purgada → 404 (mismo detalle, sin filtrar existencia). Después del fin pero antes de purge: 200 con `hasEnded: true`.
 
 ### PUT /api/rooms/{id}
-Reprograma una sala. **Sin actualizaciones parciales**: requiere **todos** los campos.
+Reprograma una sala. **Sin actualizaciones parciales**: requiere **todos** los campos (`timezone` puede omitirse; ver abajo).
 
 **Request:**
 ```json
@@ -304,12 +306,13 @@ Reprograma una sala. **Sin actualizaciones parciales**: requiere **todos** los c
 }
 ```
 
-- `timezone` es **obligatoria** en PUT (sin default).
-- `startsAt` / `endsAt` siguen el contrato de fechas (offset explícito obligatorio).
-- `purgeAt` se recalcula como `endsAt + 168h`.
+- `version`: obligatoria y debe ser un **entero positivo** (omitida, `0` o negativa → 400); positiva pero obsoleta → 409.
+- `timezone`: **omitida** → default `America/Mexico_City` (misma regla que POST); **vacía o inválida** → 400.
+- `startsAt` / `endsAt` siguen el contrato de fechas (offset explícito obligatorio, parser estricto).
+- `purgeAt` se recalcula como `endsAt + 168h` (con pre-validación de desbordamiento).
 - `codigo`, `estado` y columnas de límites no cambian.
 
-**Concurrencia:** transacción explícita + bloqueo de fila `SELECT ... FOR UPDATE`; se revalidan propiedad, versión y fechas bajo el bloqueo. `version` distinta a la actual → 409. Dos PUT con la misma versión: exactamente uno 200 y otro 409, sin pérdida de datos.
+**Concurrencia:** transacción explícita + bloqueo de fila `SELECT ... FOR UPDATE`; tras adquirir el bloqueo se toma la hora actual (`now` post-lock) como única fuente de verdad y se revalidan: propiedad, `purgeAt` (→404), `endsAt` persistido (→409), versión (→409), y que el **nuevo** `endsAt` sea posterior a `now` (→400). `version` distinta a la actual → 409. Dos PUT con la misma versión: exactamente uno 200 y otro 409, sin pérdida de datos.
 
 **Errores:** 400 (validaciones); 404 (sala ajena/purgada); 409 (versión obsoleta, evento ya finalizado — `now >= endsAt`, o colisión de concurrencia).
 
@@ -322,6 +325,7 @@ Cambia el estado de una sala propia.
 ```
 
 - `state` permitido: `abierta`, `pausada`, `cerrada`. Transiciones entre estos tres estados permitidas antes del fin del evento; después del fin → 409.
+- `version`: obligatoria y debe ser un **entero positivo** (omitida, `0` o negativa → 400); positiva pero obsoleta → 409.
 - Mismo estado con versión válida → 200 con el estado actual **sin** incrementar `version`.
 - Cambio de estado incrementa `version` y `updatedAt`; conserva fechas y `purgeAt`.
 - Mismo mecanismo de transacción + `FOR UPDATE` y revalidación que PUT. Versión obsoleta → 409.
@@ -335,6 +339,8 @@ Cambia el estado de una sala propia.
 - `appsettings.json`: `https://localhost:3000` (producción, HTTPS).
 - `appsettings.Development.json`: `http://localhost:3000` (solo desarrollo).
 - No se deriva del header Host. QR fuera de alcance.
+- **Validación al arrancar** (`IValidateOptions` + `ValidateOnStart`): la URL debe ser absoluta, sin credenciales, query ni fragmento; HTTPS obligatorio fuera de Development; HTTP solo en localhost/loopback durante Development. Configuración inválida → fallo claro al iniciar (la API no sirve peticiones).
+- La zona horaria predeterminada `America/Mexico_City` se verifica al iniciar; si no está disponible en el sistema, la API no arranca.
 
 ### Límites de sesión (asignados por servidor)
 | Columna | Valor |

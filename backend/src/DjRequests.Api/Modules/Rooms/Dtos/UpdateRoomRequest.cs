@@ -7,5 +7,5 @@ public sealed record UpdateRoomRequest(
     [Required, MaxLength(120)] string Name,
     [Required] string StartsAt,
     [Required] string EndsAt,
-    [Required, MaxLength(64)] string Timezone
+    string? Timezone
 );

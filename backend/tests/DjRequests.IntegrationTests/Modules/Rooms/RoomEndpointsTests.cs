@@ -331,6 +331,24 @@ public class RoomEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Create_EndsAtNearMaxValue_Returns400_OverflowProtected()
+    {
+        await RegisterAndLoginAsync();
+
+        var request = new CreateRoomRequest(
+            Name: "Sala Overflow",
+            StartsAt: FormatIso(DateTimeOffset.MaxValue.AddHours(-4)),
+            EndsAt: FormatIso(DateTimeOffset.MaxValue),
+            Timezone: "America/Mexico_City");
+
+        var response = await Client.PostAsJsonAsync("/api/rooms", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+        Assert.Contains("EndsAt", problem!.Errors.Keys);
+    }
+
     #region Offset explícito
 
     [Fact]
@@ -531,6 +549,14 @@ public class RoomEndpointsTests : IAsyncLifetime
     {
         await RegisterAndLoginAsync();
         var response = await Client.GetAsync("/api/rooms?pageSize=101");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task List_PageOverflow_Returns400()
+    {
+        await RegisterAndLoginAsync();
+        var response = await Client.GetAsync("/api/rooms?page=2147483647&pageSize=100");
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -740,13 +766,99 @@ public class RoomEndpointsTests : IAsyncLifetime
         {
           "version": 1,
           "name": "Sala",
-          "startsAt": "2026-12-01T00:00:00+00:00",
-          "endsAt": "2026-12-01T04:00:00+00:00"
+          "startsAt": "2026-12-01T00:00:00+00:00"
         }
         """;
         var content = new StringContent(rawJson, Encoding.UTF8, "application/json");
 
         var response = await Client.PutAsync($"/api/rooms/{room.Id}", content);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_TimezoneOmitted_UsesDefaultAmericaMexicoCity()
+    {
+        await RegisterAndLoginAsync();
+        var room = await CreateRoomAsync();
+
+        var request = new UpdateRoomRequest(
+            room.Version, "Sala", FormatIso(room.StartsAt), FormatIso(room.EndsAt), Timezone: null);
+        var response = await Client.PutAsJsonAsync($"/api/rooms/{room.Id}", request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<RoomResponse>();
+        Assert.Equal("America/Mexico_City", updated!.Timezone);
+    }
+
+    [Fact]
+    public async Task Update_TimezoneEmptyString_Returns400()
+    {
+        await RegisterAndLoginAsync();
+        var room = await CreateRoomAsync();
+
+        var request = new UpdateRoomRequest(
+            room.Version, "Sala", FormatIso(room.StartsAt), FormatIso(room.EndsAt), Timezone: "");
+        var response = await Client.PutAsJsonAsync($"/api/rooms/{room.Id}", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public async Task Update_VersionZeroOrNegative_Returns400(long version)
+    {
+        await RegisterAndLoginAsync();
+        var room = await CreateRoomAsync();
+
+        var request = new UpdateRoomRequest(
+            version, "Sala", FormatIso(room.StartsAt), FormatIso(room.EndsAt), room.Timezone);
+        var response = await Client.PutAsJsonAsync($"/api/rooms/{room.Id}", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_EndsAtNearMaxValue_Returns400_RoomUnchanged()
+    {
+        await RegisterAndLoginAsync();
+        var room = await CreateRoomAsync();
+
+        var request = new UpdateRoomRequest(
+            room.Version, "Sala Overflow", FormatIso(DateTimeOffset.MaxValue.AddHours(-4)),
+            FormatIso(DateTimeOffset.MaxValue), room.Timezone);
+        var response = await Client.PutAsJsonAsync($"/api/rooms/{room.Id}", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        // Sala sin modificar
+        await using var context = await _factory.CreateDbContextAsync();
+        var sala = await context.Salas.SingleAsync(s => s.Id == room.Id);
+        Assert.Equal(room.Nombre, sala.Nombre);
+        Assert.Equal(1, sala.Version);
+    }
+
+    [Fact]
+    public async Task Update_EndsWithTrailingGarbage_Returns400_StrictParser()
+    {
+        await RegisterAndLoginAsync();
+        var room = await CreateRoomAsync();
+
+        var request = new UpdateRoomRequest(
+            room.Version, "Sala",
+            FormatIso(room.StartsAt),
+            $"{FormatIso(room.EndsAt)} garbage",
+            room.Timezone);
+        var response = await Client.PutAsJsonAsync($"/api/rooms/{room.Id}", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_StartsWithoutTimeComponent_Returns400()
+    {
+        await RegisterAndLoginAsync();
+        var room = await CreateRoomAsync();
+
+        var request = new UpdateRoomRequest(
+            room.Version, "Sala", "2026-11-13", FormatIso(room.EndsAt), room.Timezone);
+        var response = await Client.PutAsJsonAsync($"/api/rooms/{room.Id}", request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -819,6 +931,57 @@ public class RoomEndpointsTests : IAsyncLifetime
         var updateRequest = new UpdateRoomRequest(room!.Version, "Sala", FormatIso(room.StartsAt), FormatIso(room.EndsAt), room.Timezone);
         var response = await client.PutAsJsonAsync($"/api/rooms/{room.Id}", updateRequest);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_NewEndsAtExpiresWhileWaitingForLock_Returns400()
+    {
+        await using var factory = new WebAppFactory(_postgres) { EnableRoomLockPause = true };
+        await factory.InitializeAsync();
+
+        var fakeTime = (FakeTimeProvider)factory.Services.GetRequiredService<TimeProvider>();
+        var lockPause = factory.RoomLockPause!;
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        var registerResponse = await client.PostAsJsonAsync("/api/auth/register",
+            new RegisterRequest("lockpause@test.com", "validpassphrase123", "DJ Lock"));
+        Assert.Equal(HttpStatusCode.Created, registerResponse.StatusCode);
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest("lockpause@test.com", "validpassphrase123"));
+        var tokens = await loginResponse.Content.ReadFromJsonAsync<TokenResponse>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens!.AccessToken);
+
+        var now0 = fakeTime.UtcNow;
+        var createRequest = new CreateRoomRequest(
+            "Sala Lock", FormatIso(now0.AddMinutes(1)), FormatIso(now0.AddMinutes(30)), null);
+        var createResponse = await client.PostAsJsonAsync("/api/rooms", createRequest);
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        var room = await createResponse.Content.ReadFromJsonAsync<RoomResponse>();
+
+        // Nuevo endsAt valido al inicio de la peticion (now0 + 10 min > now0)
+        var updateRequest = new UpdateRoomRequest(
+            room!.Version, "Sala Lock", FormatIso(now0.AddMinutes(1)), FormatIso(now0.AddMinutes(10)), null);
+
+        var putTask = client.PutAsJsonAsync($"/api/rooms/{room.Id}", updateRequest);
+
+        // La peticion se pausa ANTES de ejecutar FOR UPDATE; avanzar el reloj
+        await lockPause.Paused.WaitAsync(TimeSpan.FromSeconds(10));
+        fakeTime.UtcNow = now0.AddMinutes(15);
+        lockPause.Resume();
+
+        var putResponse = await putTask;
+        Assert.Equal(HttpStatusCode.BadRequest, putResponse.StatusCode);
+
+        var problem = await putResponse.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+        Assert.Contains("EndsAt", problem!.Errors.Keys);
+
+        // Sala sin modificar (version 1, nombre original)
+        await using var context = await factory.CreateDbContextAsync();
+        var sala = await context.Salas.SingleAsync(s => s.Id == room.Id);
+        Assert.Equal(1, sala.Version);
+        Assert.Equal("Sala Lock", sala.Nombre);
     }
 
     #endregion
@@ -919,6 +1082,19 @@ public class RoomEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public async Task PatchState_VersionZeroOrNegative_Returns400(long version)
+    {
+        await RegisterAndLoginAsync();
+        var room = await CreateRoomAsync();
+
+        var response = await Client.PatchAsJsonAsync($"/api/rooms/{room.Id}/state",
+            new UpdateRoomStateRequest("pausada", version));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     [Fact]
     public async Task PatchState_InvalidState_Returns400()
     {
@@ -980,21 +1156,134 @@ public class RoomEndpointsTests : IAsyncLifetime
 
     #endregion
 
-    #region CODE GENERATOR DETERMINISTIC TEST
+    #region CODE COLLISION (real unique index retries)
+
+    private static Sala BuildPersistedSala(Guid djId, string codigo, DateTimeOffset now) => new()
+    {
+        Id = Guid.NewGuid(),
+        DjId = djId,
+        Nombre = "Sala preexistente",
+        Codigo = codigo,
+        Estado = "abierta",
+        StartsAt = now.AddHours(1),
+        EndsAt = now.AddHours(4),
+        Timezone = "America/Mexico_City",
+        PurgeAt = now.AddHours(4).AddHours(168),
+        MaxSolicitudesSesion = 10,
+        MaxPlaylistsSesion = 2,
+        IntervaloEnvioSegundos = 30,
+        Version = 1,
+        CreatedAt = now,
+        UpdatedAt = now
+    };
 
     [Fact]
-    public async Task Create_CodeGeneratorCollision_RetriesDeterministic()
+    public async Task Create_CodeCollision_RetriesWithNextFreeCode()
+    {
+        await using var factory = new WebAppFactory(_postgres)
+        {
+            CustomCodeGenerator = new SequenceCodeGenerator("TESTCODE01", "TESTCODE02")
+        };
+        await factory.InitializeAsync();
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        var registerResponse = await client.PostAsJsonAsync("/api/auth/register",
+            new RegisterRequest("collide@test.com", "validpassphrase123", "DJ Col"));
+        Assert.Equal(HttpStatusCode.Created, registerResponse.StatusCode);
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest("collide@test.com", "validpassphrase123"));
+        var tokens = await loginResponse.Content.ReadFromJsonAsync<TokenResponse>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens!.AccessToken);
+
+        // Preinsertar una sala con TESTCODE01 para provocar colision real del indice unique
+        Guid djId;
+        await using (var seedContext = await factory.CreateDbContextAsync())
+        {
+            var dj = await seedContext.Users.SingleAsync(u => u.Email == "collide@test.com");
+            djId = dj.Id;
+            seedContext.Salas.Add(BuildPersistedSala(djId, "TESTCODE01", DateTimeOffset.UtcNow));
+            await seedContext.SaveChangesAsync();
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var request = new CreateRoomRequest("Sala Colision", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
+        var response = await client.PostAsJsonAsync("/api/rooms", request);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var room = await response.Content.ReadFromJsonAsync<RoomResponse>();
+        Assert.Equal("TESTCODE02", room!.Codigo);
+
+        // Ambas salas persisten con codigos unicos
+        await using var context = await factory.CreateDbContextAsync();
+        var codigos = await context.Salas.Where(s => s.DjId == djId).Select(s => s.Codigo).ToListAsync();
+        Assert.Equal(2, codigos.Count);
+        Assert.Contains("TESTCODE01", codigos);
+        Assert.Contains("TESTCODE02", codigos);
+    }
+
+    [Fact]
+    public async Task Create_CodeCollisionExhausted_Returns409_NoPartialRow()
+    {
+        await using var factory = new WebAppFactory(_postgres)
+        {
+            CustomCodeGenerator = new FixedCodeGenerator("TESTCODE01")
+        };
+        await factory.InitializeAsync();
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        var registerResponse = await client.PostAsJsonAsync("/api/auth/register",
+            new RegisterRequest("exhaust@test.com", "validpassphrase123", "DJ Exhaust"));
+        Assert.Equal(HttpStatusCode.Created, registerResponse.StatusCode);
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest("exhaust@test.com", "validpassphrase123"));
+        var tokens = await loginResponse.Content.ReadFromJsonAsync<TokenResponse>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens!.AccessToken);
+
+        Guid djId;
+        await using (var seedContext = await factory.CreateDbContextAsync())
+        {
+            var dj = await seedContext.Users.SingleAsync(u => u.Email == "exhaust@test.com");
+            djId = dj.Id;
+            seedContext.Salas.Add(BuildPersistedSala(djId, "TESTCODE01", DateTimeOffset.UtcNow));
+            await seedContext.SaveChangesAsync();
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var request = new CreateRoomRequest("Sala Exhaust", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
+        var response = await client.PostAsJsonAsync("/api/rooms", request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.Equal("Codigo no disponible", problem!.Title);
+
+        // Sin filas parciales: solo la preinsertada
+        await using var context = await factory.CreateDbContextAsync();
+        var count = await context.Salas.CountAsync(s => s.DjId == djId);
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public async Task Create_ConcurrentRequests_BothSucceedWithUniqueCodes_No500()
     {
         await RegisterAndLoginAsync();
 
-        // Sustituir generador por uno determinista
-        using var scope = _factory.Services.CreateScope();
-        var generator = scope.ServiceProvider.GetRequiredService<IRoomCodeGenerator>();
-        // Este test verifica que el endpoint usa IRoomCodeGenerator
-        Assert.NotNull(generator);
-        // Genera codigos de 10 caracteres
-        var code = generator.GenerateCode();
-        Assert.Equal(10, code.Length);
+        var now = DateTimeOffset.UtcNow;
+        var request1 = new CreateRoomRequest("Sala Paralela 1", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
+        var request2 = new CreateRoomRequest("Sala Paralela 2", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
+
+        var task1 = Client.PostAsJsonAsync("/api/rooms", request1);
+        var task2 = Client.PostAsJsonAsync("/api/rooms", request2);
+        var responses = await Task.WhenAll(task1, task2);
+
+        Assert.All(responses, r => Assert.Equal(HttpStatusCode.Created, r.StatusCode));
+
+        var room1 = await responses[0].Content.ReadFromJsonAsync<RoomResponse>();
+        var room2 = await responses[1].Content.ReadFromJsonAsync<RoomResponse>();
+        Assert.NotEqual(room1!.Codigo, room2!.Codigo);
     }
 
     #endregion

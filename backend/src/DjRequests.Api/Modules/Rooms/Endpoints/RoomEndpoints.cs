@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace DjRequests.Api.Modules.Rooms.Endpoints;
 
@@ -22,6 +23,16 @@ public static class RoomEndpoints
 {
     private const int MaxCodeAttempts = 5;
     private const double RetentionHours = 168.0;
+    private const string RoomCodeUniqueIndexName = "IX_salas_codigo";
+    private const string PostgresUniqueViolationSqlState = "23505";
+
+    private static readonly string[] StrictIsoDateTimeFormats =
+    {
+        "yyyy-MM-dd'T'HH:mm:ssK",
+        "yyyy-MM-dd'T'HH:mm:ss.fffK",
+        "yyyy-MM-dd'T'HH:mm:ss.ffffffK",
+        "yyyy-MM-dd'T'HH:mm:ss.fffffffK"
+    };
 
     public static void MapRoomEndpoints(this IEndpointRouteBuilder app)
     {
@@ -120,8 +131,18 @@ public static class RoomEndpoints
             return false;
         }
 
-        if (!DateTimeOffset.TryParse(
+        // Normalizar ±HHmm (sin dos puntos) a ±HH:mm para TryParseExact
+        if (trimmed.Length >= 5
+            && (trimmed[^5] == '+' || trimmed[^5] == '-')
+            && char.IsDigit(trimmed[^4]) && char.IsDigit(trimmed[^3])
+            && char.IsDigit(trimmed[^2]) && char.IsDigit(trimmed[^1]))
+        {
+            trimmed = $"{trimmed[..^2]}:{trimmed[^2..]}";
+        }
+
+        if (!DateTimeOffset.TryParseExact(
                 trimmed,
+                StrictIsoDateTimeFormats,
                 CultureInfo.InvariantCulture,
                 DateTimeStyles.None,
                 out var parsed))
@@ -187,6 +208,10 @@ public static class RoomEndpoints
             {
                 errors["EndsAt"] = new[] { "endsAt debe ser posterior al momento actual." };
             }
+            else if (endsAt > DateTimeOffset.MaxValue - TimeSpan.FromHours(RetentionHours))
+            {
+                errors["EndsAt"] = new[] { "endsAt es demasiado lejano: provocaria desbordamiento en purgeAt." };
+            }
         }
 
         // Zona horaria: omitida -> default; vacia o invalida -> 400
@@ -220,34 +245,50 @@ public static class RoomEndpoints
             return Results.ValidationProblem(errors);
         }
 
-        // PurgeAt = EndsAt + 168 horas exactas
-        DateTimeOffset purgeAt;
-        try
-        {
-            purgeAt = checked(endsAt.AddHours(RetentionHours));
-        }
-        catch (OverflowException)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["EndsAt"] = new[] { "La calculacion de purgeAt provocaria desbordamiento." }
-            });
-        }
+        // PurgeAt = EndsAt + 168 horas exactas (sin desbordamiento: ya validado arriba)
+        var purgeAt = endsAt.AddHours(RetentionHours);
 
-        // Generar codigo unico con reintento
-        string? code = null;
+        // Generar codigo unico con reintento sobre colision reales del indice unique
+        Entities.Sala? sala = null;
         for (int attempt = 0; attempt < MaxCodeAttempts; attempt++)
         {
             var candidate = codeGenerator.GenerateCode();
-            var exists = await context.Salas.AnyAsync(s => s.Codigo == candidate);
-            if (!exists)
+            var entity = new Entities.Sala
             {
-                code = candidate;
+                Id = Guid.NewGuid(),
+                DjId = djId,
+                Nombre = name!,
+                Codigo = candidate,
+                Estado = "abierta",
+                StartsAt = startsAt,
+                EndsAt = endsAt,
+                Timezone = timezone,
+                PurgeAt = purgeAt,
+                MaxSolicitudesSesion = 10,
+                MaxPlaylistsSesion = 2,
+                IntervaloEnvioSegundos = 30,
+                Version = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            context.Salas.Add(entity);
+            try
+            {
+                await context.SaveChangesAsync();
+                sala = entity;
                 break;
+            }
+            catch (DbUpdateException ex) when (
+                ex.InnerException is PostgresException pgEx
+                && pgEx.SqlState == PostgresUniqueViolationSqlState
+                && pgEx.ConstraintName == RoomCodeUniqueIndexName)
+            {
+                context.Entry(entity).State = EntityState.Detached;
             }
         }
 
-        if (code is null)
+        if (sala is null)
         {
             return Results.Problem(
                 detail: $"No se pudo generar un codigo unico despues de {MaxCodeAttempts} intentos.",
@@ -255,28 +296,6 @@ public static class RoomEndpoints
                 title: "Codigo no disponible",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.10");
         }
-
-        var sala = new Entities.Sala
-        {
-            Id = Guid.NewGuid(),
-            DjId = djId,
-            Nombre = name!,
-            Codigo = code,
-            Estado = "abierta",
-            StartsAt = startsAt,
-            EndsAt = endsAt,
-            Timezone = timezone,
-            PurgeAt = purgeAt,
-            MaxSolicitudesSesion = 10,
-            MaxPlaylistsSesion = 2,
-            IntervaloEnvioSegundos = 30,
-            Version = 1,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-
-        context.Salas.Add(sala);
-        await context.SaveChangesAsync();
 
         var response = BuildRoomResponse(sala, now, frontendOptions.Value);
         return Results.Created($"/api/rooms/{sala.Id}", response);
@@ -307,6 +326,14 @@ public static class RoomEndpoints
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
                 ["pageSize"] = new[] { "pageSize debe estar entre 1 y 100." }
+            });
+        }
+
+        if ((long)(page - 1) * pageSize > int.MaxValue)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["page"] = new[] { "page fuera de rango." }
             });
         }
 
@@ -371,6 +398,12 @@ public static class RoomEndpoints
 
         var errors = new Dictionary<string, string[]>();
 
+        // Validar version (omitida -> 0 -> 400)
+        if (request.Version <= 0)
+        {
+            errors["Version"] = new[] { "version debe ser un entero positivo." };
+        }
+
         // Validar nombre
         string? name = null;
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -406,13 +439,21 @@ public static class RoomEndpoints
             {
                 errors["EndsAt"] = new[] { "No se puede reprogramar un evento que ya termino." };
             }
+            else if (endsAt > DateTimeOffset.MaxValue - TimeSpan.FromHours(RetentionHours))
+            {
+                errors["EndsAt"] = new[] { "endsAt es demasiado lejano: provocaria desbordamiento en purgeAt." };
+            }
         }
 
-        // Validar zona horaria
+        // Validar zona horaria: omitida -> default; vacia o invalida -> 400
         string timezone;
-        if (string.IsNullOrWhiteSpace(request.Timezone))
+        if (request.Timezone is null)
         {
-            errors["Timezone"] = new[] { "La zona horaria es obligatoria. Use un identificador IANA como 'America/Mexico_City'." };
+            timezone = "America/Mexico_City";
+        }
+        else if (string.IsNullOrWhiteSpace(request.Timezone))
+        {
+            errors["Timezone"] = new[] { "La zona horaria no puede estar vacia. Use un identificador IANA como 'America/Mexico_City'." };
             timezone = string.Empty;
         }
         else if (request.Timezone.Length > 64)
@@ -435,19 +476,8 @@ public static class RoomEndpoints
             return Results.ValidationProblem(errors);
         }
 
-        // PurgeAt con overflow check
-        DateTimeOffset purgeAt;
-        try
-        {
-            purgeAt = checked(endsAt.AddHours(RetentionHours));
-        }
-        catch (OverflowException)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["EndsAt"] = new[] { "La calculacion de purgeAt provocaria desbordamiento." }
-            });
-        }
+        // PurgeAt = EndsAt + 168 horas exactas (sin desbordamiento: ya validado arriba)
+        var purgeAt = endsAt.AddHours(RetentionHours);
 
         // Transaccion con bloqueo de fila FOR UPDATE
         await using var transaction = await context.Database.BeginTransactionAsync();
@@ -459,6 +489,9 @@ public static class RoomEndpoints
 
         var sala = lockedSalas.SingleOrDefault();
 
+        // Hora actual POST-bloqueo: unica fuente de verdad para todas las revalidaciones
+        now = timeProvider.GetUtcNow();
+
         if (sala is null || sala.DjId != djId || sala.PurgeAt <= now)
         {
             await transaction.RollbackAsync();
@@ -469,9 +502,7 @@ public static class RoomEndpoints
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
         }
 
-        // Revalidar despues de adquirir el bloqueo con hora actual
-        var revalidatedNow = timeProvider.GetUtcNow();
-        if (sala.EndsAt <= revalidatedNow)
+        if (sala.EndsAt <= now)
         {
             await transaction.RollbackAsync();
             return Results.Problem(
@@ -491,7 +522,16 @@ public static class RoomEndpoints
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.10");
         }
 
-        // Revalidar fechas bajo bloqueo
+        // Revalidar fechas bajo bloqueo con hora post-lock
+        if (endsAt <= now)
+        {
+            await transaction.RollbackAsync();
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["EndsAt"] = new[] { "endsAt debe ser posterior al momento actual." }
+            });
+        }
+
         if (endsAt <= startsAt)
         {
             await transaction.RollbackAsync();
@@ -508,7 +548,7 @@ public static class RoomEndpoints
         sala.Timezone = timezone;
         sala.PurgeAt = purgeAt;
         sala.Version = request.Version + 1;
-        sala.UpdatedAt = timeProvider.GetUtcNow();
+        sala.UpdatedAt = now;
 
         try
         {
@@ -547,6 +587,14 @@ public static class RoomEndpoints
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
                 ["State"] = new[] { "Estado invalido. Estados permitidos: abierta, pausada, cerrada." }
+            });
+        }
+
+        if (request.Version <= 0)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["Version"] = new[] { "version debe ser un entero positivo." }
             });
         }
 

@@ -9,13 +9,31 @@ public sealed class TimeZoneValidator
         public ValidationException(string message) : base(message) { }
     }
 
+    public sealed class SystemTimeZoneException : Exception
+    {
+        public SystemTimeZoneException(string message) : base(message) { }
+    }
+
     private const string DefaultTimezone = "America/Mexico_City";
 
     public static TimeZoneInfo ValidateAndResolve(string? timezone)
     {
         if (string.IsNullOrWhiteSpace(timezone))
         {
-            return TimeZoneInfo.FindSystemTimeZoneById(DefaultTimezone);
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(DefaultTimezone);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                throw new SystemTimeZoneException(
+                    "La zona horaria predeterminada del servidor no esta disponible.");
+            }
+            catch (InvalidTimeZoneException)
+            {
+                throw new SystemTimeZoneException(
+                    "Los datos de zona horaria del sistema estan corruptos o incompletos.");
+            }
         }
 
         if (timezone.Length > 64)
@@ -43,10 +61,10 @@ public sealed class TimeZoneValidator
                 $"La zona horaria '{timezone}' no fue encontrada en el sistema. " +
                 "Zonas IANA validas incluyen 'America/Mexico_City'.");
         }
-        catch (InvalidTimeZoneException ex)
+        catch (InvalidTimeZoneException)
         {
-            throw new ValidationException(
-                $"Los datos de zona horaria del sistema estan corruptos o incompletos: {ex.Message}");
+            throw new SystemTimeZoneException(
+                "Los datos de zona horaria del sistema estan corruptos o incompletos.");
         }
     }
 

@@ -1,3 +1,4 @@
+using DjRequests.Api.Modules.Rooms.Services;
 using DjRequests.Api.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -20,6 +21,12 @@ public class WebAppFactory : WebApplicationFactory<Program>
     public bool EnableRegisterInsertBarrier { get; set; }
 
     public RegisterInsertBarrierInterceptor? RegisterInsertBarrier { get; private set; }
+
+    public IRoomCodeGenerator? CustomCodeGenerator { get; set; }
+
+    public bool EnableRoomLockPause { get; set; }
+
+    public RoomLockPauseInterceptor? RoomLockPause { get; private set; }
 
     public WebAppFactory(PostgresFixture postgres)
     {
@@ -49,11 +56,25 @@ public class WebAppFactory : WebApplicationFactory<Program>
             RegisterInsertBarrier = barrier;
         }
 
+        RoomLockPauseInterceptor? lockPause = null;
+        if (EnableRoomLockPause)
+        {
+            lockPause = new RoomLockPauseInterceptor();
+            RoomLockPause = lockPause;
+        }
+
+        var customGenerator = CustomCodeGenerator;
+
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<TimeProvider>(new FakeTimeProvider());
             services.AddSingleton<IStartupFilter>(new TestIpStartupFilter());
+
+            if (customGenerator is not null)
+            {
+                services.AddSingleton<IRoomCodeGenerator>(customGenerator);
+            }
 
             services.AddDbContext<DjRequestsDbContext>(options =>
             {
@@ -61,6 +82,10 @@ public class WebAppFactory : WebApplicationFactory<Program>
                 if (barrier is not null)
                 {
                     options.AddInterceptors(barrier);
+                }
+                if (lockPause is not null)
+                {
+                    options.AddInterceptors(lockPause);
                 }
             });
         });
