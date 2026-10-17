@@ -1286,5 +1286,94 @@ public class RoomEndpointsTests : IAsyncLifetime
         Assert.NotEqual(room1!.Codigo, room2!.Codigo);
     }
 
+    [Fact]
+    public async Task Create_ConcurrentRequests_ForcedCollision_No500_NoDataLoss()
+    {
+        await using var factory = new WebAppFactory(_postgres)
+        {
+            CustomCodeGenerator = new CollidingThenFreeCodeGenerator("COLLIDE001", collideCount: 2, "FREE000001", "FREE000002")
+        };
+        await factory.InitializeAsync();
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        var registerResponse = await client.PostAsJsonAsync("/api/auth/register",
+            new RegisterRequest("forced@test.com", "validpassphrase123", "DJ Forced"));
+        Assert.Equal(HttpStatusCode.Created, registerResponse.StatusCode);
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest("forced@test.com", "validpassphrase123"));
+        var tokens = await loginResponse.Content.ReadFromJsonAsync<TokenResponse>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens!.AccessToken);
+
+        Guid djId;
+        await using (var seedContext = await factory.CreateDbContextAsync())
+        {
+            var dj = await seedContext.Users.SingleAsync(u => u.Email == "forced@test.com");
+            djId = dj.Id;
+            seedContext.Salas.Add(BuildPersistedSala(djId, "COLLIDE001", DateTimeOffset.UtcNow));
+            await seedContext.SaveChangesAsync();
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var request1 = new CreateRoomRequest("Forzada 1", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
+        var request2 = new CreateRoomRequest("Forzada 2", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
+
+        var responses = await Task.WhenAll(
+            client.PostAsJsonAsync("/api/rooms", request1),
+            client.PostAsJsonAsync("/api/rooms", request2));
+
+        Assert.All(responses, r => Assert.Equal(HttpStatusCode.Created, r.StatusCode));
+
+        var room1 = await responses[0].Content.ReadFromJsonAsync<RoomResponse>();
+        var room2 = await responses[1].Content.ReadFromJsonAsync<RoomResponse>();
+        Assert.NotEqual(room1!.Codigo, room2!.Codigo);
+        Assert.NotEqual("COLLIDE001", room1.Codigo);
+        Assert.NotEqual("COLLIDE001", room2.Codigo);
+
+        // Preinsertada + 2 creadas, todas con codigos unicos
+        await using var context = await factory.CreateDbContextAsync();
+        var codigos = await context.Salas.Where(s => s.DjId == djId).Select(s => s.Codigo).ToListAsync();
+        Assert.Equal(3, codigos.Count);
+        Assert.Equal(3, codigos.Distinct().Count());
+        Assert.Contains("COLLIDE001", codigos);
+        Assert.Contains(room1.Codigo, codigos);
+        Assert.Contains(room2.Codigo, codigos);
+    }
+
+    private sealed class CollidingThenFreeCodeGenerator : IRoomCodeGenerator
+    {
+        private readonly string _collide;
+        private readonly int _collideCount;
+        private readonly string[] _free;
+        private int _call;
+        private int _freeTaken;
+
+        public CollidingThenFreeCodeGenerator(string collide, int collideCount, params string[] free)
+        {
+            _collide = collide;
+            _collideCount = collideCount;
+            _free = free;
+        }
+
+        public string GenerateCode()
+        {
+            var n = Interlocked.Increment(ref _call);
+            if (n <= _collideCount)
+            {
+                return _collide;
+            }
+
+            var idx = Interlocked.Increment(ref _freeTaken) - 1;
+            return _free[Math.Min(idx, _free.Length - 1)];
+        }
+
+        public bool TryGenerateCode(out string code, int maxAttempts = 5)
+        {
+            code = GenerateCode();
+            return true;
+        }
+    }
+
     #endregion
 }

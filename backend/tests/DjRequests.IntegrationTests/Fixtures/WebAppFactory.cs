@@ -1,3 +1,4 @@
+using DjRequests.Api.Modules.Guests.Services;
 using DjRequests.Api.Modules.Rooms.Services;
 using DjRequests.Api.Persistence;
 using Microsoft.AspNetCore.Hosting;
@@ -28,6 +29,12 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
     public RoomLockPauseInterceptor? RoomLockPause { get; private set; }
 
+    public bool EnableGuestLockPause { get; set; }
+
+    public GuestLockPauseInterceptor? GuestLockPause { get; private set; }
+
+    public IGuestTokenGenerator? CustomGuestTokenGenerator { get; set; }
+
     public WebAppFactory(PostgresFixture postgres)
     {
         _postgres = postgres;
@@ -56,14 +63,22 @@ public class WebAppFactory : WebApplicationFactory<Program>
             RegisterInsertBarrier = barrier;
         }
 
-        RoomLockPauseInterceptor? lockPause = null;
+        RoomLockPauseInterceptor? roomLockPause = null;
         if (EnableRoomLockPause)
         {
-            lockPause = new RoomLockPauseInterceptor();
-            RoomLockPause = lockPause;
+            roomLockPause = new RoomLockPauseInterceptor();
+            RoomLockPause = roomLockPause;
+        }
+
+        GuestLockPauseInterceptor? guestLockPause = null;
+        if (EnableGuestLockPause)
+        {
+            guestLockPause = new GuestLockPauseInterceptor();
+            GuestLockPause = guestLockPause;
         }
 
         var customGenerator = CustomCodeGenerator;
+        var customGuestGenerator = CustomGuestTokenGenerator;
 
         builder.ConfigureTestServices(services =>
         {
@@ -76,6 +91,11 @@ public class WebAppFactory : WebApplicationFactory<Program>
                 services.AddSingleton<IRoomCodeGenerator>(customGenerator);
             }
 
+            if (customGuestGenerator is not null)
+            {
+                services.AddSingleton<IGuestTokenGenerator>(customGuestGenerator);
+            }
+
             services.AddDbContext<DjRequestsDbContext>(options =>
             {
                 options.UseNpgsql(testConnectionString);
@@ -83,9 +103,13 @@ public class WebAppFactory : WebApplicationFactory<Program>
                 {
                     options.AddInterceptors(barrier);
                 }
-                if (lockPause is not null)
+                if (roomLockPause is not null)
                 {
-                    options.AddInterceptors(lockPause);
+                    options.AddInterceptors(roomLockPause);
+                }
+                if (guestLockPause is not null)
+                {
+                    options.AddInterceptors(guestLockPause);
                 }
             });
         });
@@ -122,13 +146,19 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
         try
         {
+            // Liberar el pool de conexiones de esta base unica para no agotar
+            // las conexiones del contenedor compartido entre muchos WebAppFactory.
+            var testConnectionString = _postgres.Container.GetConnectionString()
+                .Replace("Database=postgres", $"Database={_dbName}");
+            NpgsqlConnection.ClearPool(new NpgsqlConnection(testConnectionString));
+
             await using var adminConn = new NpgsqlConnection(_postgres.Container.GetConnectionString());
             await adminConn.OpenAsync();
 
             await using (var cmd = new NpgsqlCommand($"""
                 SELECT pg_terminate_backend(pid)
                 FROM pg_stat_activity
-                WHERE datname = '{_dbName}' AND pid <> pg_backend_pid()
+                WHERE datname = "{_dbName}" AND pid <> pg_backend_pid()
                 """, adminConn))
             {
                 await cmd.ExecuteNonQueryAsync();

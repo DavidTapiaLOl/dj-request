@@ -4,6 +4,9 @@ using DjRequests.Api.Entities;
 using DjRequests.Api.Modules.Accounts.Endpoints;
 using DjRequests.Api.Modules.Accounts.Options;
 using DjRequests.Api.Modules.Accounts.Policies;
+using DjRequests.Api.Modules.Guests.Endpoints;
+using DjRequests.Api.Modules.Guests.Options;
+using DjRequests.Api.Modules.Guests.Services;
 using DjRequests.Api.Modules.Health;
 using DjRequests.Api.Modules.Rooms.Options;
 using DjRequests.Api.Modules.Rooms.Services;
@@ -21,7 +24,6 @@ using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services
 builder.Services.AddDbContext<DjRequestsDbContext>(options =>
 {
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
@@ -75,12 +77,19 @@ builder.Services.AddOptions<FrontendUrlOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<FrontendUrlOptions>, FrontendUrlOptionsValidator>();
 
+builder.Services.Configure<GuestRateLimitOptions>(
+    builder.Configuration.GetSection("GuestRateLimits"));
+
 builder.Services.AddRateLimiter(options =>
 {
     var authOptions = builder.Configuration.GetSection("AuthRateLimits").Get<AuthRateLimitOptions>()
         ?? new AuthRateLimitOptions();
 
+    var guestOptions = builder.Configuration.GetSection("GuestRateLimits").Get<GuestRateLimitOptions>()
+        ?? new GuestRateLimitOptions();
+
     var window = TimeSpan.FromMinutes(authOptions.WindowMinutes);
+    var guestWindow = TimeSpan.FromMinutes(guestOptions.WindowMinutes);
 
     static Func<HttpContext, RateLimitPartition<string>> PartitionByClientIp(int permitLimit, TimeSpan window)
     {
@@ -97,9 +106,35 @@ builder.Services.AddRateLimiter(options =>
         };
     }
 
+    Func<HttpContext, RateLimitPartition<string>> PartitionGuestGet = context =>
+    {
+        var partitionKey = context.Items["GuestRateLimitPartition"] as string ?? (context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = guestOptions.GetPermitLimit,
+            Window = guestWindow,
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        });
+    };
+
+    Func<HttpContext, RateLimitPartition<string>> PartitionGuestPost = context =>
+    {
+        var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(clientIp, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = guestOptions.PostPermitLimit,
+            Window = guestWindow,
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        });
+    };
+
     options.AddPolicy("register", PartitionByClientIp(authOptions.RegisterPermitLimit, window));
     options.AddPolicy("login", PartitionByClientIp(authOptions.LoginPermitLimit, window));
     options.AddPolicy("refresh", PartitionByClientIp(authOptions.RefreshPermitLimit, window));
+    options.AddPolicy("guest-create", PartitionGuestPost);
+    options.AddPolicy("guest-get", PartitionGuestGet);
 
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = async (context, _) =>
@@ -119,7 +154,7 @@ builder.Services.AddRateLimiter(options =>
                 ProblemDetails = new ProblemDetails
                 {
                     Title = "Demasiadas solicitudes",
-                    Detail = "Se ha excedido el limite de solicitudes para esta direccion IP. Intente de nuevo mas tarde.",
+                    Detail = "Se ha excedido el limite de solicitudes. Intente de nuevo mas tarde.",
                     Status = StatusCodes.Status429TooManyRequests,
                     Type = "https://tools.ietf.org/html/rfc6585#section-4"
                 }
@@ -130,10 +165,11 @@ builder.Services.AddRateLimiter(options =>
 
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IRoomCodeGenerator, RoomCodeGenerator>();
+builder.Services.AddSingleton<IGuestTokenGenerator, GuestTokenGenerator>();
+builder.Services.AddScoped<IGuestSessionService, GuestSessionService>();
 builder.Services.Configure<TimeZoneValidatorOptions>(
     config => config.DefaultTimezone = "America/Mexico_City");
 
-// Verificar que la zona horaria predeterminada este disponible en el sistema
 try
 {
     TimeZoneInfo.FindSystemTimeZoneById("America/Mexico_City");
@@ -141,12 +177,14 @@ try
 catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
 {
     throw new InvalidOperationException(
-        "La zona horaria predeterminada 'America/Mexico_City' no esta disponible en el sistema.", ex);
+        "La zona horaria predeterminada \"America/Mexico_City\" no esta disponible en el sistema.", ex);
 }
 
 builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();
+
+app.UseGuestSessionValidation();
 
 app.UseRateLimiter();
 
@@ -195,14 +233,10 @@ app.Use(async (context, next) =>
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Map health endpoints
 app.MapHealthEndpoints();
-
-// Map auth endpoints
 app.MapAuthEndpoints();
-
-// Register rooms endpoints
 app.MapRoomEndpoints();
+app.MapGuestEndpoints();
 
 app.Run();
 public partial class Program { }

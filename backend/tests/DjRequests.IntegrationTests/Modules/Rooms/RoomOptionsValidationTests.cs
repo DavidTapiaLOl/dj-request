@@ -77,6 +77,16 @@ public class RoomOptionsValidationTests
     }
 
     [Theory]
+    [InlineData("ftp://example.com")]
+    [InlineData("file:///var/www/app")]
+    [InlineData("ws://example.com")]
+    public void FrontendUrl_InvalidScheme_FailsInDevelopment(string url)
+    {
+        var result = CreateValidator("Development").Validate(Options.DefaultName, new FrontendUrlOptions { BaseUrl = url });
+        Assert.True(result.Failed);
+    }
+
+    [Theory]
     [InlineData("http://localhost:3000")]
     [InlineData("http://127.0.0.1:3000")]
     public void FrontendUrl_HttpLoopback_SucceedsInDevelopment(string url)

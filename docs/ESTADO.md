@@ -1,4 +1,45 @@
-﻿# DJ Requests — Estado de la tarea 03
+﻿# DJ Requests — Estado de la tarea 04
+
+## Resumen
+- Tarea 01: estructura del backend, modelo de datos, migración inicial y SQL de revisión.
+- Tarea 02: autenticación de DJs — endpoints, Identity, tokens, rate limiting por IP, tests.
+- Tarea 03: creación y gestión de salas del DJ — endpoints `/api/rooms` con validación estricta, concurrencia con `FOR UPDATE`, código criptográfico, zona horaria IANA, inviteUrl configurable, pruebas e integración y migración de concurrencia.
+- Tarea 04 (correcciones acotadas post-revisión): validación de esquema en `Frontend:BaseUrl` (0a), test concurrente de colisión forzada de código de sala (0b), y ajustes del contrato de invitados.
+
+## Archivos creados/modificados (Tarea 04)
+- `backend/src/DjRequests.Api/Modules/Rooms/Options/FrontendUrlOptionsValidator.cs` — rechaza esquemas ≠ http/https en cualquier entorno.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Rooms/RoomOptionsValidationTests.cs` — añadido `FrontendUrl_InvalidScheme_FailsInDevelopment` (`ftp://`, `file://`, `ws://`).
+- `backend/tests/DjRequests.IntegrationTests/Modules/Rooms/RoomEndpointsTests.cs` — añadido `Create_ConcurrentRequests_ForcedCollision_No500_NoDataLoss` con generador `CollidingThenFreeCodeGenerator` (thread-safe).
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/WebAppFactory.cs` — `NpgsqlConnection.ClearPool` al disponer cada factory (evita agotar conexiones del contenedor compartido).
+
+## Comandos ejecutados (Tarea 04)
+```cmd
+dotnet build backend\src\DjRequests.Api\DjRequests.Api.csproj --no-restore
+dotnet build backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-restore
+dotnet test backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-build --filter "FullyQualifiedName~Modules.Guests"
+dotnet test backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --no-build --filter "FullyQualifiedName~Modules.Rooms"
+dotnet test backend\DjRequests.slnx --no-build
+```
+
+## Resultados (Tarea 04)
+- **Build API**: 0 errores, 0 advertencias.
+- **Build tests**: 0 errores, 1 advertencia preexistente (CS0618 en `DatabaseFixture.cs`).
+- **Tests Guests**: 40/40 en verde.
+- **Tests Rooms**: 89/89 en verde (+4 vs 85: 3 esquemas + 1 colisión concurrente).
+- **Suite completa**: 193/193 en verde (~53 s), Docker disponible con Testcontainers PostgreSQL 17. 0 fallidas, 0 omitidas.
+- **Ajuste 0a — esquema de `Frontend:BaseUrl`**: el validador ya rechazaba http/https incorrectamente en cualquier entorno; ahora hay test explícito en Development (`ftp://`, `file://`, `ws://` → falla) además del ya existente en Production.
+- **Ajuste 0b — colisión concurrente forzada**: test con `CollidingThenFreeCodeGenerator` (devuelve el mismo código a las primeras N llamadas y luego códigos libres, thread-safe con `Interlocked`). Dos `POST /api/rooms` concurrentes colisionan de verdad contra `IX_salas_codigo` (SQLSTATE `23505`), reintentan y ambas terminan 201 con códigos distintos; 3 salas persisten con códigos únicos, sin 500 ni pérdida de datos.
+
+## Notas (Tarea 04)
+- La suite completa superó el umbral de conexiones del contenedor (53300 `too many clients`) al pasar de 149 a 193 tests: cada `WebAppFactory` crea una BD única y su propio pool Npgsql, que no se liberaba al disposing. Se añadió `NpgsqlConnection.ClearPool` en `DisposeAsync`.
+- **Migraciones**: no se generó ni aplicó ninguna migración en esta tarea (`sesiones_invitado` ya existía desde `InitialCore`). `dj_requests` no fue tocada.
+
+## Pendientes (Tarea 04)
+- Ninguno dentro del alcance acotado (Rooms 0a/0b + contrato de invitados verificado con suite completa en verde).
+
+---
+
+# DJ Requests — Estado de la tarea 03
 
 ## Resumen
 - Tarea 01: estructura del backend, modelo de datos, migración inicial y SQL de revisión. La migración `20261006034357_InitialCore` fue aplicada localmente a `dj_requests` por el usuario (confirmación: `Done.`).

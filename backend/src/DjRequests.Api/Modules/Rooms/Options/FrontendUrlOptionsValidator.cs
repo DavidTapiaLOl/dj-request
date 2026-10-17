@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
@@ -23,6 +23,15 @@ public sealed class FrontendUrlOptionsValidator : IValidateOptions<FrontendUrlOp
         if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var uri))
         {
             return ValidateOptionsResult.Fail("Frontend.BaseUrl debe ser una URL absoluta valida.");
+        }
+
+        // Solo se permiten esquemas HTTP y HTTPS en cualquier entorno
+        var scheme = uri.Scheme;
+        if (!scheme.Equals("http", StringComparison.OrdinalIgnoreCase)
+            && !scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
+        {
+            return ValidateOptionsResult.Fail(
+                "Frontend.BaseUrl solo permite esquemas HTTP o HTTPS.");
         }
 
         if (!string.IsNullOrEmpty(uri.UserInfo))

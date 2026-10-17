@@ -353,6 +353,96 @@ No son editables vía API en esta tarea.
 
 ---
 
+## Guests Endpoints
+
+Los endpoints de invitados están bajo `/api/guest`. **No requieren autenticación bearer**: el invitado se identifica con un token temporal en la cabecera `X-Guest-Token`. Los invitados no tienen cuenta ni contraseña.
+
+**Endpoints:** `POST /api/guest/sessions`, `GET /api/guest/rooms/{roomId}`.
+
+### POST /api/guest/sessions
+Crea una sesión temporal de invitado a partir del código de la sala.
+
+**Request:**
+```json
+{ "code": "ABCD2FGHJK" }
+```
+
+- `code`: obligatorio. Tras `Trim()` y `ToUpperInvariant()` debe tener exactamente 10 caracteres de `[A-HJ-NP-Z2-9]` (sin I, O, 0 ni 1). Formato inválido → 400 (`ValidationProblemDetails`, clave `Code`). Campos extra del cliente (`guestToken`, `expiresAt`, etc.) se **ignoran**.
+
+**Response 201** (`Location: /api/guest/rooms/{roomId}`):
+```json
+{
+  "guestToken": "…43 chars base64url…",
+  "expiresAt": "2026-12-02T08:00:00Z",
+  "room": { "id": "guid", "name": "Sala Test", "state": "abierta", "canReceiveRequests": true,
+            "maxSolicitudesSesion": 10, "maxPlaylistsSesion": 2, "intervaloEnvioSegundos": 30, … }
+}
+```
+
+- `guestToken`: 32 bytes aleatorios (`RandomNumberGenerator`) en Base64URL sin padding (43 chars). Es la **única** credencial entregada al invitado; **solo se persiste su hash SHA-256** (`token_hash`, hex 64). El token original no se guarda.
+- `expiresAt`: se fija al crear como `EndsAt` de la sala y **no** cambia al reprogramar la sala. El efectivo es `min(expiresAt, endsAt actual)`.
+- Transacción con `SELECT ... FOR UPDATE` sobre la sala; `now` post-lock revalida: DJ activo, `purgeAt`, `endsAt` y estado `abierta`. Colisiones del índice único `IX_sesiones_invitado_token_hash` se detectan por SQLSTATE `23505` y se reintentan (hasta 5 intentos); sin preconsulta `AnyAsync`.
+
+**Errores:**
+- 400: código con formato inválido.
+- 404: sala inexistente, finalizada (`endsAt <= now`), purgada (`purgeAt <= now`) o DJ suspendido.
+- 409: sala `pausada` o `cerrada`; o token no único tras 5 intentos.
+- 429: rate limit `guest-create` (60/min por IP).
+
+### GET /api/guest/rooms/{roomId}
+Devuelve el estado mínimo de la sala para el invitado.
+
+**Headers:**
+```
+X-Guest-Token: <guestToken>
+```
+
+**Response 200:**
+```json
+{
+  "room": { "id": "guid", "name": "Sala Test", "state": "abierta", "canReceiveRequests": false, … },
+  "expiresAt": "2026-12-02T08:00:00Z"
+}
+```
+
+- `canReceiveRequests` es `false` si la sala está `pausada`/`cerrada` (una sala pausada sigue siendo legible, solo deja de recibir).
+- `expiresAt` = `min(session.ExpiresAt, sala.EndsAt)`.
+
+**Validación y códigos de estado** (el backend revalida en cada petición; nunca se confía en el token):
+- 401: token ausente, mal formado (longitud ≠ 43 o Base64 inválido), desconocido, revocado (`revoked_at`) o expirado (`now >= expires_at`).
+- 404: sala inexistente, **token de otra sala**, sala finalizada (`now >= endsAt`) o purgada, o DJ suspendido. El detalle es genérico y no revela la sala destino.
+
+**Orden de precedencia** (definido en `GuestSessionService`): se comprueba pertenencia a la sala antes de revocación/expiración; entre sesión expirada (401) y sala finalizada (404), la expiración de la sesión tiene prioridad. Esto permite que al **acortar** el evento (sala finalizada con sesión aún vigente) se responda 404, y al **extender** el evento el `expiresAt` del invitado no se alarga.
+
+### Validación previa al rate limiter (middleware)
+
+`UseGuestSessionValidation` se ejecuta **antes** de `UseRateLimiter` y **no** escribe `HttpContext.User` ni corta la respuesta con errores de autenticación. Su único efecto es poblar `HttpContext.Items["GuestRateLimitPartition"]` para la política `guest-get`:
+- Sesión válida → clave `session:{salaId}:{sesionId}`.
+- Sesión inválida (ausente, malformada, desconocida o de otra sala) → `RemoteIpAddress` con fallback `"unknown"`.
+
+La validación de la credencial se consulta **antes** de aplicar el límite, de modo que los intentos inválidos también consumen cuota (por IP). `X-Forwarded-For` no se lee y no altera la partición; se usa `Connection.RemoteIpAddress`. No se persiste IP ni se loggea `X-Guest-Token`.
+
+### Rate Limits de invitados (configurables)
+```json
+"GuestRateLimits": {
+  "PostPermitLimit": 60,
+  "GetPermitLimit": 120,
+  "WindowMinutes": 1
+}
+```
+
+- `guest-create` (POST): 60/min por IP. `guest-get` (GET): 120/min por sesión (o por IP si la credencial es inválida). Ventana fija, `QueueLimit = 0`.
+- 429 con cuerpo `ProblemDetails` (`application/problem+json`) y `Retry-After`.
+- Límite declarativo con `RequireRateLimiting(...)` en cada endpoint; no se mezcla con contadores manuales.
+
+### Seguridad y privacidad
+- Solo se persiste `token_hash` (SHA-256 en hex); la tabla `sesiones_invitado` no guarda el token original.
+- `Cache-Control: no-store` en respuestas de invitado; no se sirve audio ni previews.
+- El token de invitado **no** autentica endpoints de DJ (protegidos por bearer + `ActiveDj`), y un bearer de DJ **no** sustituye `X-Guest-Token`.
+- Una sesión pertenece a exactamente una sala; el endpoint no permite cruzar salas (404 sin revelar destino).
+
+---
+
 ## Notas
 - EF Core Migrations es la fuente ejecutable del esquema. No se duplica DDL en scripts de init de Docker.
 - `EnsureCreated` **no** se utiliza. Migraciones solo manuales.

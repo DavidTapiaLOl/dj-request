@@ -1,0 +1,44 @@
+@baseUrl = http://localhost:5000
+@accessToken = PEGAR_AQUÍ_ACCESS_TOKEN
+@roomCode = PEGAR_AQUÍ_CODIGO_SALA
+@roomId = PEGAR_AQUÍ_GUID_SALA
+@guestToken = PEGAR_AQUÍ_TOKEN_INVITADO
+
+### Crear sesión de invitado (con el código de la sala)
+POST {{baseUrl}}/api/guest/sessions
+Content-Type: application/json
+
+{
+  "code": "{{roomCode}}"
+}
+
+### Crear sesión con código inválido (esperado 400)
+POST {{baseUrl}}/api/guest/sessions
+Content-Type: application/json
+
+{
+  "code": "codigo-invalido"
+}
+
+### Crear sesión con código desconocido (esperado 404)
+POST {{baseUrl}}/api/guest/sessions
+Content-Type: application/json
+
+{
+  "code": "ZZZZZZZZ29"
+}
+
+### Obtener sala como invitado (requiere X-Guest-Token)
+GET {{baseUrl}}/api/guest/rooms/{{roomId}}
+X-Guest-Token: {{guestToken}}
+
+### Sin token (esperado 401)
+GET {{baseUrl}}/api/guest/rooms/{{roomId}}
+
+### Token mal formado (esperado 401)
+GET {{baseUrl}}/api/guest/rooms/{{roomId}}
+X-Guest-Token: no-es-un-token
+
+### Token de otra sala (esperado 404, sin revelar destino)
+GET {{baseUrl}}/api/guest/rooms/{{roomId}}
+X-Guest-Token: {{guestToken}}

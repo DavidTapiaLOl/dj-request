@@ -25,6 +25,14 @@ Fase 1: ASP.NET Core Identity con Guid y usuario DjAccount mapeado a djs; no se 
 Fase 3: administradores separados, sin endpoints públicos de registro, autenticación robusta y control de privilegios. Modelo y auditoría están documentados; no crear credenciales de administrador de ejemplo.
 Invitado: token opaco aleatorio, limitado a sala, expirable y revocable; guardar solo hash. No usar un UUID enviado por el cliente como autenticación.
 
+### Sesiones de invitado (implementado)
+- Credencial: 32 bytes de `RandomNumberGenerator` en Base64URL sin padding (43 chars). Se entrega solo al crear la sesión; en BD se persiste únicamente el hash SHA-256 (`sesiones_invitado.token_hash`, hex 64). Nunca se usa un UUID del cliente como autenticación.
+- Creación: `POST /api/guest/sessions` con el código de sala. Transacción + `SELECT ... FOR UPDATE` sobre la sala; `now` post-lock revalida DJ activo, `purgeAt`, `endsAt` y estado `abierta`. Colisiones del índice único `token_hash` se detectan por SQLSTATE `23505` y se reintentan (hasta 5), sin preconsulta.
+- Uso: `GET /api/guest/rooms/{roomId}` con `X-Guest-Token`. El backend revalida en cada petición (propiedad de sala, revocación, expiración, `endsAt`, `purgeAt`, DJ activo). El `expiresAt` del invitado se fija al crear (= `EndsAt` de la sala) y no cambia al reprogramar; el efectivo es `min(expiresAt, endsAt actual)`.
+- Precedencia 401/404 (en `GuestSessionService`): pertenencia a la sala antes que revocación/expiración; sesión expirada (401) antes que sala finalizada (404). Un token de otra sala o una sala inexistente/finalizada/purgada o DJ suspendido → 404 genérico sin revelar destino; token ausente/malformado/desconocido/revocado/expirado → 401.
+- Rate limiting declarativo: middleware `UseGuestSessionValidation` **antes** de `UseRateLimiter` popula `HttpContext.Items["GuestRateLimitPartition"]` (sesión válida → `session:{salaId}:{sesionId}`; inválida → IP con fallback `"unknown"`) sin tocar `HttpContext.User` ni cortar con errores. Los intentos inválidos consumen cuota por IP. `X-Forwarded-For` no se lee. Límites `guest-create` 60/min y `guest-get` 120/min, `QueueLimit = 0`, 429 con `Retry-After`.
+- El token de invitado no autentica endpoints de DJ; un bearer de DJ no sustituye `X-Guest-Token`. `Cache-Control: no-store` en respuestas de invitado.
+
 ## Retención y operación
 Usar UTC, TimeProvider inyectable y timestamptz. Persistir zona IANA del evento para presentación. Ventana de retención propuesta: 168 horas exactas tras ends_at.
 Worker cada 15 minutos; en producción objetivo de borrado físico dentro de 15 minutos bajo operación normal. API bloquea acceso al llegar purge_at aunque worker falle. Tras reinicio procesa atrasados. Limpieza transaccional por lotes y con bloqueo/coordinación segura entre instancias; comprobar fechas bajo bloqueo.
