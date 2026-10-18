@@ -5,7 +5,7 @@
 @guestToken = PEGAR_AQUÍ_TOKEN_INVITADO
 
 ### Crear sesión de invitado (con el código de la sala)
-POST {{baseUrl}}/api/guest/sessions
+POST {{baseUrl}}/api/guest-sessions
 Content-Type: application/json
 
 {
@@ -13,7 +13,7 @@ Content-Type: application/json
 }
 
 ### Crear sesión con código inválido (esperado 400)
-POST {{baseUrl}}/api/guest/sessions
+POST {{baseUrl}}/api/guest-sessions
 Content-Type: application/json
 
 {
@@ -21,11 +21,19 @@ Content-Type: application/json
 }
 
 ### Crear sesión con código desconocido (esperado 404)
-POST {{baseUrl}}/api/guest/sessions
+POST {{baseUrl}}/api/guest-sessions
 Content-Type: application/json
 
 {
   "code": "ZZZZZZZZ29"
+}
+
+### Crear sesión vía ruta anterior (no debe crear sesión)
+POST {{baseUrl}}/api/guest/sessions
+Content-Type: application/json
+
+{
+  "code": "{{roomCode}}"
 }
 
 ### Obtener sala como invitado (requiere X-Guest-Token)

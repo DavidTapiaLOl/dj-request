@@ -38,8 +38,7 @@ public sealed class GuestSessionService : IGuestSessionService
         var now = timeProvider.GetUtcNow();
 
         var session = await context.SesionesInvitado
-            .Include(s => s.Sala)
-            .ThenInclude(s => s.Dj)
+            .AsNoTracking()
             .SingleOrDefaultAsync(s => s.TokenHash == tokenHash, cancellationToken);
 
         if (session is null)
@@ -47,7 +46,21 @@ public sealed class GuestSessionService : IGuestSessionService
             return new GuestSessionValidationResult(GuestSessionStatus.Unauthorized, null, null);
         }
 
-        var sala = session.Sala;
+        if (session.RevokedAt is not null)
+        {
+            return new GuestSessionValidationResult(GuestSessionStatus.Unauthorized, session, null);
+        }
+
+        if (now >= session.ExpiresAt)
+        {
+            return new GuestSessionValidationResult(GuestSessionStatus.Unauthorized, session, null);
+        }
+
+        var sala = await context.Salas
+            .AsNoTracking()
+            .Include(s => s.Dj)
+            .SingleOrDefaultAsync(s => s.Id == session.SalaId, cancellationToken);
+
         if (sala is null)
         {
             return new GuestSessionValidationResult(GuestSessionStatus.RoomNotFound, session, null);
@@ -58,22 +71,12 @@ public sealed class GuestSessionService : IGuestSessionService
             return new GuestSessionValidationResult(GuestSessionStatus.RoomNotFound, session, sala);
         }
 
-        if (session.RevokedAt is not null)
-        {
-            return new GuestSessionValidationResult(GuestSessionStatus.Unauthorized, session, sala);
-        }
-
-        if (now >= session.ExpiresAt)
-        {
-            return new GuestSessionValidationResult(GuestSessionStatus.Unauthorized, session, sala);
-        }
-
         if (now >= sala.EndsAt || now >= sala.PurgeAt)
         {
             return new GuestSessionValidationResult(GuestSessionStatus.RoomNotFound, session, sala);
         }
 
-        if (sala.Dj.Estado != "activo")
+        if (sala.Dj is null || sala.Dj.Estado != "activo")
         {
             return new GuestSessionValidationResult(GuestSessionStatus.RoomNotFound, session, sala);
         }

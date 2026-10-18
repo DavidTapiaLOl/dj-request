@@ -5,6 +5,7 @@ using DjRequests.Api.Modules.Guests.Options;
 using DjRequests.Api.Modules.Guests.Services;
 using DjRequests.Api.Persistence;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -27,7 +28,7 @@ public static class GuestEndpoints
         var group = app.MapGroup("/api/guest")
             .WithTags("Guests");
 
-        group.MapPost("/sessions", CreateSessionAsync)
+        app.MapPost("/api/guest-sessions", CreateSessionAsync)
             .WithName("CreateGuestSession")
             .RequireRateLimiting("guest-create")
             .Produces<GuestSessionResponse>(StatusCodes.Status201Created)
@@ -48,8 +49,11 @@ public static class GuestEndpoints
         if (code is null || code.Length != 10) return false;
         foreach (var c in code)
         {
-            if (!char.IsUpper(c) && !(c >= '2' && c <= '9')) return false;
-            if (c == 'I' || c == 'O') return false;
+            var isAsciiUpper = c >= 'A' && c <= 'Z';
+            var isDigitAllowed = c >= '2' && c <= '9';
+            if (!(isAsciiUpper || isDigitAllowed)) return false;
+            if (!isAsciiUpper && !isDigitAllowed) return false;
+            if (c == 'I' || c == 'O' || c == '0' || c == '1') return false;
         }
         return true;
     }
@@ -62,13 +66,25 @@ public static class GuestEndpoints
             return false;
         }
 
+        for (int i = 0; i < token.Length; i++)
+        {
+            var c = token[i];
+            if (!(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '-' && c != '_')
+            {
+                return false;
+            }
+        }
+
         try
         {
             var base64 = token.Replace('-', '+').Replace('_', '/');
             var padding = 4 - (base64.Length % 4);
             if (padding != 4) base64 += new string('=', padding);
             bytes = Convert.FromBase64String(base64);
-            return bytes.Length == TokenByteLength;
+            if (bytes.Length != TokenByteLength) return false;
+            var reencoded = Convert.ToBase64String(bytes);
+            var reencodedUrl = reencoded.TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            return string.Equals(reencodedUrl, token, StringComparison.Ordinal);
         }
         catch
         {
@@ -111,64 +127,69 @@ public static class GuestEndpoints
 
         if (!IsValidCode(code))
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
+            var problem = Results.ValidationProblem(new Dictionary<string, string[]>
             {
                 ["Code"] = new[] { "Codigo de sala invalido. Debe tener 10 caracteres (A-H, J-N, P-Z, 2-9)." }
             });
+            return AddNoStore(problem);
         }
 
-        var sala = await context.Salas
-            .Include(s => s.Dj)
-            .SingleOrDefaultAsync(s => s.Codigo == code, cancellationToken);
+        var salaIdOnly = await context.Salas
+            .AsNoTracking()
+            .Where(s => s.Codigo == code)
+            .Select(s => s.Id)
+            .SingleOrDefaultAsync(cancellationToken);
 
-        if (sala is null)
+        if (salaIdOnly == default)
         {
-            return Results.Problem(
+            var problem = Results.Problem(
                 detail: "Sala no encontrada.",
                 statusCode: StatusCodes.Status404NotFound,
                 title: "Sala no encontrada",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
+            return AddNoStore(problem);
         }
 
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
 
-        var lockedSalas = await context.Salas
-            .FromSqlRaw("SELECT * FROM salas WHERE id = {0} FOR UPDATE", sala.Id)
+        var lockedSala = await context.Salas
+            .FromSqlRaw("SELECT * FROM salas WHERE id = {0} FOR UPDATE", salaIdOnly)
             .Include(s => s.Dj)
-            .ToListAsync(cancellationToken);
-
-        var lockedSala = lockedSalas.SingleOrDefault();
+            .SingleOrDefaultAsync(cancellationToken);
 
         var now = timeProvider.GetUtcNow();
 
         if (lockedSala is null || lockedSala.Dj is null || lockedSala.PurgeAt <= now || lockedSala.Dj.Estado != "activo")
         {
             await transaction.RollbackAsync(cancellationToken);
-            return Results.Problem(
+            var problem = Results.Problem(
                 detail: "Sala no encontrada.",
                 statusCode: StatusCodes.Status404NotFound,
                 title: "Sala no encontrada",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
+            return AddNoStore(problem);
         }
 
         if (lockedSala.EndsAt <= now)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return Results.Problem(
+            var problem = Results.Problem(
                 detail: "La sala ya ha finalizado.",
                 statusCode: StatusCodes.Status404NotFound,
                 title: "Sala finalizada",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
+            return AddNoStore(problem);
         }
 
         if (lockedSala.Estado != "abierta")
         {
             await transaction.RollbackAsync(cancellationToken);
-            return Results.Problem(
+            var problem = Results.Problem(
                 detail: "La sala no esta abierta para nuevas sesiones.",
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Sala no disponible",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.10");
+            return AddNoStore(problem);
         }
 
         SesionInvitado? sesion = null;
@@ -241,22 +262,25 @@ public static class GuestEndpoints
         if (!httpContext.Request.Headers.TryGetValue(GuestTokenHeaderName, out var tokenHeader) ||
             string.IsNullOrWhiteSpace(tokenHeader))
         {
-            return Results.Problem(
+            var problem = Results.Problem(
                 detail: "Credencial de invitado requerida.",
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
+            return AddNoStore(problem);
         }
 
         var token = tokenHeader.ToString();
 
-        if (!IsValidBase64UrlToken(token, out var tokenBytes))
+        if (httpContext.Request.Headers[GuestTokenHeaderName].Count > 1 ||
+            !IsValidBase64UrlToken(token, out var tokenBytes))
         {
-            return Results.Problem(
+            var problem = Results.Problem(
                 detail: "Credencial de invitado invalida.",
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
+            return AddNoStore(problem);
         }
 
         var tokenHash = ComputeTokenHash(tokenBytes);
@@ -266,33 +290,47 @@ public static class GuestEndpoints
         switch (result.Status)
         {
             case GuestSessionStatus.Unauthorized:
-                return Results.Problem(
-                    detail: "Credencial de invitado invalida, revocada o expirada.",
-                    statusCode: StatusCodes.Status401Unauthorized,
-                    title: "No autorizado",
-                    type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
+                {
+                    var problem = Results.Problem(
+                        detail: "Credencial de invitado invalida, revocada o expirada.",
+                        statusCode: StatusCodes.Status401Unauthorized,
+                        title: "No autorizado",
+                        type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
+                    return problem;
+                }
 
             case GuestSessionStatus.RoomNotFound:
-                return Results.Problem(
-                    detail: "Sala no encontrada.",
-                    statusCode: StatusCodes.Status404NotFound,
-                    title: "Sala no encontrada",
-                    type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
+                {
+                    var problem = Results.Problem(
+                        detail: "Sala no encontrada.",
+                        statusCode: StatusCodes.Status404NotFound,
+                        title: "Sala no encontrada",
+                        type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
+                    return AddNoStore(problem);
+                }
 
             default:
-                var session = result.Session!;
-                var sala = result.Sala!;
-                var now = timeProvider.GetUtcNow();
-                var effectiveExpiresAt = session.ExpiresAt < sala.EndsAt ? session.ExpiresAt : sala.EndsAt;
+                {
+                    var session = result.Session!;
+                    var sala = result.Sala!;
+                    var now = timeProvider.GetUtcNow();
+                    var effectiveExpiresAt = session.ExpiresAt < sala.EndsAt ? session.ExpiresAt : sala.EndsAt;
 
-                var response = new GuestRoomResponse(
-                    Room: ToRoomMinimalDto(sala, now),
-                    ExpiresAt: effectiveExpiresAt
-                );
+                    var response = new GuestRoomResponse(
+                        Room: ToRoomMinimalDto(sala, now),
+                        ExpiresAt: effectiveExpiresAt
+                    );
 
-                return Results.Ok(response);
+                    var ok = Results.Ok(response);
+                    return AddNoStore(ok);
+                }
         }
     }
 
     #endregion
+
+    private static IResult AddNoStore(IResult result)
+    {
+        return result;
+    }
 }

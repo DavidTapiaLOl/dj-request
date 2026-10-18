@@ -112,7 +112,7 @@ public class GuestEndpointsTests : IAsyncLifetime
 
     private async Task<string> CreateSessionAsync(HttpClient client, string code)
     {
-        var response = await client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+        var response = await client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(code));
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var session = await response.Content.ReadFromJsonAsync<GuestSessionResponse>();
         Assert.NotNull(session);
@@ -131,14 +131,14 @@ public class GuestEndpointsTests : IAsyncLifetime
 
     #endregion
 
-    #region POST /api/guest/sessions
+    #region POST /api/guest-sessions
 
     [Fact]
     public async Task CreateSession_ValidCode_BeforeEvent_Returns201WithToken()
     {
         var (roomId, code) = await CreateRoomAndGetCodeAsync();
 
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(code));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var session = await response.Content.ReadFromJsonAsync<GuestSessionResponse>();
@@ -161,7 +161,7 @@ public class GuestEndpointsTests : IAsyncLifetime
 
         FakeTime.UtcNow = FakeTime.UtcNow.AddHours(2);
 
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(code));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
@@ -172,7 +172,7 @@ public class GuestEndpointsTests : IAsyncLifetime
         var (_, code) = await CreateRoomAndGetCodeAsync();
 
         var request = new CreateGuestSessionRequest("  " + code.ToLowerInvariant() + "  ");
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", request);
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", request);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
@@ -185,7 +185,7 @@ public class GuestEndpointsTests : IAsyncLifetime
     [InlineData("CODEWITHIO1")]
     public async Task CreateSession_InvalidCode_Returns400(string code)
     {
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(code));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -193,7 +193,7 @@ public class GuestEndpointsTests : IAsyncLifetime
     [Fact]
     public async Task CreateSession_NullCode_Returns400()
     {
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(null!));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(null!));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -201,7 +201,7 @@ public class GuestEndpointsTests : IAsyncLifetime
     [Fact]
     public async Task CreateSession_UnknownCode_Returns404()
     {
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest("ZZZZZZZZ29"));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest("ZZZZZZZZ29"));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -213,7 +213,7 @@ public class GuestEndpointsTests : IAsyncLifetime
 
         await Client.PatchAsJsonAsync($"/api/rooms/{roomId}/state", new UpdateRoomStateRequest("pausada", 1));
 
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(code));
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
@@ -225,7 +225,7 @@ public class GuestEndpointsTests : IAsyncLifetime
 
         await Client.PatchAsJsonAsync($"/api/rooms/{roomId}/state", new UpdateRoomStateRequest("cerrada", 1));
 
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(code));
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
@@ -237,7 +237,7 @@ public class GuestEndpointsTests : IAsyncLifetime
 
         FakeTime.UtcNow = FakeTime.UtcNow.AddHours(5);
 
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(code));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -254,7 +254,7 @@ public class GuestEndpointsTests : IAsyncLifetime
             await context.SaveChangesAsync();
         }
 
-        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+        var response = await Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(code));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -296,7 +296,7 @@ public class GuestEndpointsTests : IAsyncLifetime
 
         var raw = $@"{{ ""code"": ""{code}"", ""guestToken"": ""client-should-not-set"", ""expiresAt"": ""2000-01-01T00:00:00Z"" }}";
         var content = new StringContent(raw, System.Text.Encoding.UTF8, "application/json");
-        var response = await Client.PostAsync("/api/guest/sessions", content);
+        var response = await Client.PostAsync("/api/guest-sessions", content);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var session = await response.Content.ReadFromJsonAsync<GuestSessionResponse>();
@@ -342,7 +342,7 @@ public class GuestEndpointsTests : IAsyncLifetime
                 await seed.SaveChangesAsync();
             }
 
-            var response = await client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(room.Codigo));
+            var response = await client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(room.Codigo));
 
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
             var session = await response.Content.ReadFromJsonAsync<GuestSessionResponse>();
@@ -413,6 +413,7 @@ public class GuestEndpointsTests : IAsyncLifetime
         var response = await Client.SendAsync(GuestGet(roomId, unknown));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoStore == true);
     }
 
     [Fact]
@@ -563,6 +564,16 @@ public class GuestEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreateSession_OldPath_DoesNotCreateSession()
+    {
+        var (_, code) = await CreateRoomAndGetCodeAsync();
+
+        var response = await Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(code));
+
+        Assert.NotEqual(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
     public async Task GetRoom_NeverReturnsGuestToken()
     {
         var (roomId, code) = await CreateRoomAndGetCodeAsync();
@@ -632,12 +643,12 @@ public class GuestEndpointsTests : IAsyncLifetime
         {
             for (int i = 0; i < 60; i++)
             {
-                var response = await setup.Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(setup.Code));
+                var response = await setup.Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(setup.Code));
                 Assert.NotEqual(HttpStatusCode.TooManyRequests, response.StatusCode);
                 response.Dispose();
             }
 
-            var limited = await setup.Client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(setup.Code));
+            var limited = await setup.Client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(setup.Code));
             Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
             Assert.True(limited.Headers.TryGetValues("Retry-After", out _));
         }
@@ -688,6 +699,7 @@ public class GuestEndpointsTests : IAsyncLifetime
 
             var limited = await setup.Client.SendAsync(GuestGet(setup.RoomId, "another-invalid"));
             Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+            Assert.True(limited.Headers.CacheControl?.NoStore == true);
         }
         finally
         {
@@ -744,7 +756,7 @@ public class GuestEndpointsTests : IAsyncLifetime
             var room = await CreateRoomAsync(client, fakeTime.UtcNow);
             var now0 = fakeTime.UtcNow;
 
-            var postTask = client.PostAsJsonAsync("/api/guest/sessions", new CreateGuestSessionRequest(room.Codigo));
+            var postTask = client.PostAsJsonAsync("/api/guest-sessions", new CreateGuestSessionRequest(room.Codigo));
 
             await lockPause.Paused.WaitAsync(TimeSpan.FromSeconds(10));
             fakeTime.UtcNow = now0.AddHours(5);

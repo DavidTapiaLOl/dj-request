@@ -145,6 +145,11 @@ builder.Services.AddRateLimiter(options =>
             context.HttpContext.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
         }
 
+        if (!context.HttpContext.Response.HasStarted)
+        {
+            context.HttpContext.Response.Headers.CacheControl = "no-store";
+        }
+
         var problemDetailsService = context.HttpContext.RequestServices.GetService<IProblemDetailsService>();
         if (problemDetailsService is not null)
         {

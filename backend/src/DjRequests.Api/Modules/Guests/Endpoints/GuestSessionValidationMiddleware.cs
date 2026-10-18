@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
-using DjRequests.Api.Entities;
 using DjRequests.Api.Persistence;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 
 namespace DjRequests.Api.Modules.Guests.Endpoints;
@@ -20,15 +20,15 @@ public sealed class GuestSessionValidationMiddleware
 
     public async Task InvokeAsync(HttpContext context, DjRequestsDbContext dbContext)
     {
-        var path = context.Request.Path.Value;
-        if (path is null || !path.StartsWith("/api/guest", StringComparison.OrdinalIgnoreCase))
+        var endpoint = context.GetEndpoint();
+        if (endpoint is null)
         {
             await _next(context);
             return;
         }
 
-        if (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase)
-            && path.StartsWith("/api/guest/rooms/", StringComparison.OrdinalIgnoreCase))
+        var isGuestGet = endpoint.Metadata.OfType<EndpointNameMetadata>().Any(m => m.EndpointName == "GetGuestRoom");
+        if (isGuestGet)
         {
             await ValidateGuestTokenForGet(context, dbContext);
         }
@@ -47,6 +47,12 @@ public sealed class GuestSessionValidationMiddleware
         }
 
         var token = tokenHeader.ToString();
+        if (context.Request.Headers[GuestTokenHeaderName].Count > 1)
+        {
+            context.Items["GuestRateLimitPartition"] = GetClientIp(context);
+            context.Items["GuestSessionValid"] = false;
+            return;
+        }
 
         if (!IsValidBase64UrlToken(token, out var tokenBytes))
         {
@@ -58,8 +64,7 @@ public sealed class GuestSessionValidationMiddleware
         var tokenHash = ComputeTokenHash(tokenBytes);
 
         var session = await dbContext.SesionesInvitado
-            .Include(s => s.Sala)
-            .ThenInclude(s => s.Dj)
+            .AsNoTracking()
             .SingleOrDefaultAsync(s => s.TokenHash == tokenHash);
 
         if (session is null)
@@ -80,8 +85,6 @@ public sealed class GuestSessionValidationMiddleware
         var partitionKey = string.Format("session:{0}:{1}", session.SalaId, session.Id);
         context.Items["GuestRateLimitPartition"] = partitionKey;
         context.Items["GuestSessionValid"] = true;
-        context.Items["GuestSession"] = session;
-        context.Items["GuestSala"] = session.Sala;
     }
 
     private static string GetClientIp(HttpContext context)
@@ -97,13 +100,25 @@ public sealed class GuestSessionValidationMiddleware
             return false;
         }
 
+        for (int i = 0; i < token.Length; i++)
+        {
+            var c = token[i];
+            if (!(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '-' && c != '_')
+            {
+                return false;
+            }
+        }
+
         try
         {
             var base64 = token.Replace('-', '+').Replace('_', '/');
             var padding = 4 - (base64.Length % 4);
             if (padding != 4) base64 += new string('=', padding);
             bytes = Convert.FromBase64String(base64);
-            return bytes.Length == TokenByteLength;
+            if (bytes.Length != TokenByteLength) return false;
+            var reencoded = Convert.ToBase64String(bytes);
+            var reencodedUrl = reencoded.TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            return string.Equals(reencodedUrl, token, StringComparison.Ordinal);
         }
         catch
         {

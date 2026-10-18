@@ -4,7 +4,7 @@
 - Tarea 01: estructura del backend, modelo de datos, migración inicial y SQL de revisión.
 - Tarea 02: autenticación de DJs — endpoints, Identity, tokens, rate limiting por IP, tests.
 - Tarea 03: creación y gestión de salas del DJ — endpoints `/api/rooms` con validación estricta, concurrencia con `FOR UPDATE`, código criptográfico, zona horaria IANA, inviteUrl configurable, pruebas e integración y migración de concurrencia.
-- Tarea 04 (correcciones acotadas post-revisión): validación de esquema en `Frontend:BaseUrl` (0a), test concurrente de colisión forzada de código de sala (0b), y ajustes del contrato de invitados.
+- Tarea 04 (correcciones acotadas post-revisión): validación de esquema en `Frontend:BaseUrl` (0a), test concurrente de colisión forzada de código de sala (0b), y ajustes del contrato de invitados. Correcciones implementadas según especificación: ruta POST /api/guest-sessions, validación unificada, rate limiting, lectura bajo bloqueo, parser token canónico, validación código sala ASCII.
 
 ## Archivos creados/modificados (Tarea 04)
 - `backend/src/DjRequests.Api/Modules/Rooms/Options/FrontendUrlOptionsValidator.cs` — rechaza esquemas ≠ http/https en cualquier entorno.
