@@ -75,7 +75,17 @@ builder.Services.Configure<AuthRateLimitOptions>(
 builder.Services.AddOptions<FrontendUrlOptions>()
     .Bind(builder.Configuration.GetSection(FrontendUrlOptions.SectionName))
     .ValidateOnStart();
-builder.Services.AddSingleton<IValidateOptions<FrontendUrlOptions>, FrontendUrlOptionsValidator>();
+builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("ExpoDevelopment", policy =>
+        {
+            policy
+                .WithOrigins("http://localhost:8081")
+                .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+                .WithHeaders("Content-Type", "Authorization")
+                .WithExposedHeaders("Retry-After");
+        });
+    });
 
 builder.Services.Configure<GuestRateLimitOptions>(
     builder.Configuration.GetSection("GuestRateLimits"));
@@ -188,6 +198,13 @@ catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneExc
 builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors("ExpoDevelopment");
+}
+
+app.UseRouting();
 
 app.UseGuestSessionValidation();
 

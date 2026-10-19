@@ -4,43 +4,73 @@ import {
   Text,
   TextInput,
   Button,
-  ActivityIndicator,
   Alert,
-  Keyboard,
+  ActivityIndicator,
   StyleSheet,
+  TouchableOpacity,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
-import { useForm } from "react-hook-form";
+import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/provider";
-import { loginSchema } from "../../src/api/dto";
-import { z } from "zod";
 
 export default function LoginScreen() {
-  const navigation = useNavigation();
-
-  const {
-    register: formRegister,
-    handleSubmit,
-    reset,
-    watch,
-    formState: { errors, isSubmitting },
-  } = useForm<z.infer<typeof loginSchema>>({
-    mode: "onBlur",
-    defaultValues: {
-      email: "",
-      password: "",
-    },
-  });
-
+  const router = useRouter();
   const { login } = useAuth();
 
-  const onSubmit = async (data: z.infer<typeof loginSchema>) => {
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [emailError, setEmailError] = React.useState<string | null>(null);
+  const [passwordError, setPasswordError] = React.useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [emailTouched, setEmailTouched] = React.useState(false);
+  const [passwordTouched, setPasswordTouched] = React.useState(false);
+
+  const onSubmit = async () => {
+    let valid = true;
+
+    if (!email.trim()) {
+      setEmailError("Correo obligatorio");
+      setEmailTouched(true);
+      valid = false;
+    } else {
+      setEmailError(null);
+    }
+
+    if (!password.trim()) {
+      setPasswordError("Contraseña obligatoria");
+      setPasswordTouched(true);
+      valid = false;
+    } else {
+      setPasswordError(null);
+    }
+
+    if (!valid) return;
+
     try {
-      await login(data.email, data.password);
-      navigation.navigate("(app)/rooms");
-    } catch (err) {
-      Alert.alert("Error", "Credenciales inválidas. Inténtalo de nuevo.");
-      setTimeout(() => {}, 100);
+      setIsSubmitting(true);
+      await login(email, password);
+      router.replace("/(app)");
+    } catch (err: any) {
+      if (err instanceof Error && err.message.includes("Network error")) {
+        Alert.alert("Error de red", "No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
+      } else {
+        Alert.alert("Error", "Credenciales inválidas. Inténtalo de nuevo.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const onEmailBlur = () => {
+    setEmailTouched(true);
+    if (!email.trim()) {
+      setEmailError("Correo obligatorio");
+    }
+  };
+
+  const onPasswordBlur = () => {
+    setPasswordTouched(true);
+    if (!password.trim()) {
+      setPasswordError("Contraseña obligatoria");
     }
   };
 
@@ -58,17 +88,20 @@ export default function LoginScreen() {
         Inicio de sesión
       </Text>
 
-      <form onSubmit={handleSubmit(onSubmit)} style={{ width: "100%", maxWidth: 350 }}>
+      <View style={{ width: "100%", maxWidth: 350 }}>
         {/* Email */}
         <TextInput
           placeholder="Correo electrónico"
-          autoCompleteName="email"
-          autoCapitalize="none"
-          keyboardType="email-address"
+          value={email}
+          onChangeText={(text) => {
+            setEmail(text);
+            if (emailError) setEmailError(null);
+          }}
+          onBlur={onEmailBlur}
           style={{
             width: "100%",
             height: 50,
-            borderColor: "#c0c0c0",
+            borderColor: emailTouched && email === "" ? "#ff0000" : "#c0c0c0",
             borderWidth: 1,
             borderRadius: 8,
             paddingHorizontal: 12,
@@ -76,22 +109,25 @@ export default function LoginScreen() {
             fontSize: 16,
             backgroundColor: "#fff",
           }}
-          value={watch("email")}
-          onChange={formRegister}
         />
-        {errors.email && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{errors.email.message}</Text>
+        {emailTouched && emailError && (
+          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{emailError}</Text>
         )}
 
         {/* Password */}
         <TextInput
           placeholder="Contraseña"
           secureTextEntry
-          autoCompleteCurrentPassword
+          value={password}
+          onChangeText={(text) => {
+            setPassword(text);
+            if (passwordError) setPasswordError(null);
+          }}
+          onBlur={onPasswordBlur}
           style={{
             width: "100%",
             height: 50,
-            borderColor: "#c0c0c0",
+            borderColor: passwordTouched && password === "" ? "#ff0000" : "#c0c0c0",
             borderWidth: 1,
             borderRadius: 8,
             paddingHorizontal: 12,
@@ -99,11 +135,9 @@ export default function LoginScreen() {
             fontSize: 16,
             backgroundColor: "#fff",
           }}
-          value={watch("password")}
-          onChange={formRegister}
         />
-        {errors.password && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{errors.password.message}</Text>
+        {passwordTouched && passwordError && (
+          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>Contraseña obligatoria</Text>
         )}
 
         {/* Buttons */}
@@ -118,13 +152,12 @@ export default function LoginScreen() {
               justifyContent: "center",
               alignItems: "center",
             }}
-            onPress={handleSubmit(onSubmit)}
+            onPress={onSubmit}
           >
             <Text style={{ color: "white", fontSize: 16 }}>Entrar</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            disabled={isSubmitting}
             style={{
               width: "48%",
               height: 48,
@@ -133,23 +166,14 @@ export default function LoginScreen() {
               justifyContent: "center",
               alignItems: "center",
             }}
-            onPress={() => navigation.navigate("Register")}
+            onPress={() => router.push("/(auth)/register")}
           >
             <Text style={{ color: "white", fontSize: 16 }}>Registrarse</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Forgot password link */}
-        <Text
-          style={{
-            marginTop: 20,
-            color: "#64748b",
-            fontSize: 14,
-          }}
-        >
-          ¿Olvidaste tu contraseña?
-        </Text>
-      </form>
+      </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({});

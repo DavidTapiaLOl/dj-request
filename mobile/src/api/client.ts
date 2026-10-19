@@ -1,11 +1,14 @@
 import type { z } from "zod";
+import { MeResponse } from "./dto";
+import * as SecureStore from "expo-secure-store";
+import * as Storage from "../auth/storage";
 
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface RequestOptions {
   body?: unknown;
   headers?: Record<string, string>;
-  retry?: boolean;
+  retryCount?: number;
 }
 
 export class ApiError extends Error {
@@ -30,14 +33,24 @@ const BASE_URL = typeof process !== "undefined"
   ? (process as any).env.EXPO_PUBLIC_API_URL
   : "http://localhost:5000";
 
+const PUBLIC_PATHS = ["/api/auth/login", "/api/auth/register", "/api/auth/refresh"];
+
 export async function request<T>(
   method: Method,
   path: string,
   options: RequestOptions = {}
 ): Promise<T> {
+  // Obtener headers de auth automáticamente (incluye Authorization: Bearer <token>)
+  // Excluir endpoints públicos para evitar conflictos con registro/login
+  const isPublicPath = PUBLIC_PATHS.some((p) => path.startsWith(p));
+  const authHeaders = isPublicPath
+    ? {}
+    : await getAuthHeaders();
+
   const url = `${BASE_URL}${path}`;
   const headers = {
     "Content-Type": "application/json",
+    ...authHeaders,
     ...options.headers,
   };
 
@@ -103,44 +116,18 @@ export async function request<T>(
 
 let isRefreshing = false;
 let refreshPromise: Promise<void> | null = null;
-let retryQueue: Array<{
-  method: Method;
-  path: string;
-  options: RequestOptions;
-  resolve: (data: any) => void;
-  reject: (err: Error) => void;
-}> = [];
-
-function enqueueRetry<T>(
-  method: Method,
-  path: string,
-  options: RequestOptions,
-  resolve: (data: T) => void,
-  reject: (err: Error) => void
-) {
-  retryQueue.push({ method, path, options, resolve, reject });
-}
-
-function processRetryQueue(error: Error) {
-  retryQueue.forEach(({ method, path, options, resolve, reject }) => {
-    reject(error);
-  });
-  retryQueue = [];
-}
 
 async function refreshAuth(): Promise<void> {
   if (isRefreshing) {
-    return refreshPromise;
+    return refreshPromise!;
   }
 
-  isRefreshing = true;
   refreshPromise = (async () => {
     try {
-      const { getRefreshToken, setTokens } = await import("../auth/storage");
-      const refreshToken = await getRefreshToken();
+      const refreshToken = await Storage.getRefreshToken();
 
       if (!refreshToken) {
-        processRetryQueue(new NetworkError("No hay token de actualización"));
+        refreshPromise = null;
         return;
       }
 
@@ -150,12 +137,10 @@ async function refreshAuth(): Promise<void> {
         { body: { refreshToken }, retryCount: 0 }
       );
 
-      await setTokens(result.accessToken, result.refreshToken);
-      processRetryQueue(new Error("Refresh completed"));
+      await Storage.setTokens(result.accessToken, result.refreshToken);
+      refreshPromise = null;
     } catch (err) {
-      processRetryQueue(
-        err instanceof Error ? err : new Error("Refresh failed")
-      );
+      refreshPromise = null;
     } finally {
       isRefreshing = false;
       refreshPromise = null;
@@ -167,8 +152,6 @@ async function refreshAuth(): Promise<void> {
 
 export { refreshAuth };
 
-// --- login / register / me API calls ---
-
 export async function loginApi(email: string, password: string): Promise<{ accessToken: string; refreshToken: string }> {
   const result = await request<{ accessToken: string; refreshToken: string }>(
     "POST",
@@ -176,10 +159,7 @@ export async function loginApi(email: string, password: string): Promise<{ acces
     { body: { email, password }, retryCount: 0 }
   );
 
-  await import("../auth/storage").then((mod) => {
-    const { setTokens } = mod;
-    setTokens(result.accessToken, result.refreshToken);
-  });
+  await Storage.setTokens(result.accessToken, result.refreshToken);
 
   return result;
 }
@@ -212,8 +192,7 @@ export async function getMe(): Promise<MeResponse> {
 
 // Tipado corregido para admitir ausencia de token
 export async function getAuthHeaders(): Promise<Record<string, string>> {
-  const { getAccessToken } = await import("../auth/storage");
-  const token = await getAccessToken();
+  const token = await Storage.getAccessToken();
 
   if (!token) {
     return {};

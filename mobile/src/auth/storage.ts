@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 const STORAGE_KEYS = {
   accessToken: "dj_access_token",
@@ -7,7 +8,7 @@ const STORAGE_KEYS = {
 
 // Helper: obtener clave de almacenamiento según el entorno
 function getStorageKey(key: "accessToken" | "refreshToken"): string {
-  return `${STORAGE_KEYS[key]}_${typeof window !== "undefined" ? "web" : "native"}`;
+  return `${STORAGE_KEYS[key]}_${Platform.OS === "web" ? "web" : "native"}`;
 }
 
 // Almacenamiento nativo (Android/iOS)
@@ -80,16 +81,12 @@ async function webRemoveItem(key: string): Promise<void> {
 
 export async function getAccessToken(): Promise<string | null> {
   try {
-    // Intentar primero SecureStore (nativo), si falla usar sessionStorage (web)
-    if (typeof window === "undefined") {
-      // Entorno nativo
-      return nativeGetItem(STORAGE_KEYS.accessToken);
-    } else {
-      // Entorno web: intentar SecureStore primero (fallará), luego sessionStorage
-      const nativeToken = await nativeGetItem(STORAGE_KEYS.accessToken).catch(() => null);
-      if (nativeToken) return nativeToken;
+    if (Platform.OS === "web") {
+      // Entorno web: usar sessionStorage (no intentar SecureStore)
       return webGetItem(getStorageKey("accessToken"));
     }
+    // Entorno nativo: usar SecureStore
+    return nativeGetItem(STORAGE_KEYS.accessToken);
   } catch (error) {
     console.error("Error getting access token:", error);
     return null;
@@ -98,13 +95,10 @@ export async function getAccessToken(): Promise<string | null> {
 
 export async function getRefreshToken(): Promise<string | null> {
   try {
-    if (typeof window === "undefined") {
-      return nativeGetItem(STORAGE_KEYS.refreshToken);
-    } else {
-      const nativeToken = await nativeGetItem(STORAGE_KEYS.refreshToken).catch(() => null);
-      if (nativeToken) return nativeToken;
+    if (Platform.OS === "web") {
       return webGetItem(getStorageKey("refreshToken"));
     }
+    return nativeGetItem(STORAGE_KEYS.refreshToken);
   } catch (error) {
     console.error("Error getting refresh token:", error);
     return null;
@@ -113,14 +107,14 @@ export async function getRefreshToken(): Promise<string | null> {
 
 export async function setTokens(accessToken: string, refreshToken: string): Promise<void> {
   try {
-    if (typeof window === "undefined") {
-      // Entorno nativo: usar SecureStore
-      await nativeSetItem(STORAGE_KEYS.accessToken, accessToken);
-      await nativeSetItem(STORAGE_KEYS.refreshToken, refreshToken);
-    } else {
+    if (Platform.OS === "web") {
       // Entorno web: usar sessionStorage (temporal, por duración de pestaña)
       await webSetItem(getStorageKey("accessToken"), accessToken);
       await webSetItem(getStorageKey("refreshToken"), refreshToken);
+    } else {
+      // Entorno nativo: usar SecureStore
+      await nativeSetItem(STORAGE_KEYS.accessToken, accessToken);
+      await nativeSetItem(STORAGE_KEYS.refreshToken, refreshToken);
     }
     // NO logar tokens en consola
   } catch (error) {
@@ -131,12 +125,12 @@ export async function setTokens(accessToken: string, refreshToken: string): Prom
 
 export async function removeTokens(): Promise<void> {
   try {
-    if (typeof window === "undefined") {
-      await nativeRemoveItem(STORAGE_KEYS.accessToken);
-      await nativeRemoveItem(STORAGE_KEYS.refreshToken);
-    } else {
+    if (Platform.OS === "web") {
       await webRemoveItem(getStorageKey("accessToken"));
       await webRemoveItem(getStorageKey("refreshToken"));
+    } else {
+      await nativeRemoveItem(STORAGE_KEYS.accessToken);
+      await nativeRemoveItem(STORAGE_KEYS.refreshToken);
     }
   } catch (error) {
     console.error("Error removing tokens:", error);

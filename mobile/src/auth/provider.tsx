@@ -1,47 +1,73 @@
 import * as React from "react";
+import { useEffect } from "react";
 import * as storage from "./storage";
 import { loginApi, registerApi, getMe, getAuthHeaders, refreshAuth } from "../api/client";
-
-// Export functions at module level for screens to import (no JWT decoding)
-export async function login(email: string, password: string): Promise<void> {
-  try {
-    await loginApi(email, password);
-  } catch (error) {
-    console.error("Login error:", error);
-    throw error;
-  }
-}
-
-// Export register function at module level for screens to import
-export async function register(email: string, password: string, artistName?: string): Promise<void> {
-  try {
-    await registerApi(email, password, artistName ?? "");
-  } catch (error) {
-    console.error("Register error:", error);
-    throw error;
-  }
-}
+import { MeResponse } from "../api/dto";
 
 export interface AuthContextType {
-  user: any;
+  user: MeResponse | null;
   isLoading: boolean;
   loginStatus: "checking" | "authenticated" | "unauthenticated";
+  restoreError?: boolean;
+  setRestoreError: (value: boolean | undefined) => void;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, artistName?: string) => Promise<void>;
   logout: () => Promise<void>;
   getAuthHeaders: () => Promise<Record<string, string>>;
 }
 
-const AuthContext = React.createContext<AuthContextType | undefined>(undefined);
+const AuthContext = React.createContext<AuthContextType & { restoreError?: boolean } | undefined>(undefined);
 
-export const AuthProvider: React.FC = ({ children }) => {
-  const [user, setUser] = React.useState<any>(null);
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const [user, setUser] = React.useState<MeResponse | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [loginStatus, setLoginStatus] = React.useState<
     "checking" | "authenticated" | "unauthenticated"
   >("checking");
+  const [restoreError, setRestoreError] = React.useState<boolean | undefined>(undefined);
 
-  const getAuthHeaders = async () => {
+  useEffect(() => {
+    async function restoreSession() {
+      try {
+        const token = await storage.getAccessToken();
+        if (!token) {
+          setLoginStatus("unauthenticated");
+          setUser(null);
+          setIsLoading(false);
+          return;
+        }
+
+        const me = await getMe();
+        setUser({
+          id: me.id,
+          email: me.email,
+          artistName: me.artistName,
+        });
+        setLoginStatus("authenticated");
+      } catch (err: any) {
+        if (err instanceof Error && (err.message.includes("401") || err.message.includes("403"))) {
+          await storage.removeTokens();
+          setLoginStatus("unauthenticated");
+        } else if (err instanceof Error && err.message.includes("Network error")) {
+          // Error de red: no borrar tokens ni marcar unauthenticated
+          setRestoreError(true);
+          setLoginStatus("checking");
+        } else {
+          setRestoreError(false);
+          setLoginStatus("unauthenticated");
+        }
+        setUser(null);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    restoreSession();
+  }, []);
+
+  const localGetAuthHeaders = async () => {
     return await getAuthHeaders();
   };
 
@@ -51,12 +77,11 @@ export const AuthProvider: React.FC = ({ children }) => {
     try {
       await loginApi(email, password);
       const me = await getMe();
-      setUser({
-        id: me.id,
-        email: me.email,
-        name: me.artistName,
-        isDJ: false,
-      });
+setUser({
+          id: me.id,
+          email: me.email,
+          artistName: me.artistName,
+        });
       setLoginStatus("authenticated");
     } catch (err: any) {
       setLoginStatus("unauthenticated");
@@ -71,19 +96,18 @@ export const AuthProvider: React.FC = ({ children }) => {
     setIsLoading(true);
     setLoginStatus("checking");
     try {
-      await registerApi(email, password, artistName ?? "");
-      const me = await getMe();
-      if (me.id) {
+      const result = await registerApi(email, password, artistName ?? "");
+      if (result.accessToken) {
+        const me = await getMe();
         setUser({
           id: me.id,
           email: me.email,
-          name: me.artistName,
-          isDJ: false,
+          artistName: me.artistName,
         });
         setLoginStatus("authenticated");
       } else {
         setLoginStatus("unauthenticated");
-        throw new Error("No se obtuvo perfil tras registro");
+        throw new Error("Tu cuenta fue creada, pero no pudimos iniciar sesión. Intenta ingresar");
       }
     } catch (err: any) {
       setLoginStatus("unauthenticated");
@@ -110,10 +134,12 @@ export const AuthProvider: React.FC = ({ children }) => {
         user,
         isLoading,
         loginStatus,
+        restoreError,
+        setRestoreError,
         login,
         register,
         logout,
-        getAuthHeaders,
+        getAuthHeaders: localGetAuthHeaders,
       }}
     >
       {children}

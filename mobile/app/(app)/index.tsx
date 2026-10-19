@@ -2,160 +2,138 @@ import * as React from "react";
 import {
   View,
   Text,
-  FlatList,
-  ActivityIndicator,
-  TouchableOpacity,
-  Alert,
-  Keyboard,
+  TextInput,
+  Button,
+  RefreshControl,
+  ScrollView,
   StyleSheet,
+  ActivityIndicator,
 } from "react-native";
-import { useNavigation, useRoute } from "@react-navigation/native";
-import { useEffect, useState } from "react";
-
-import { request } from "../../src/api/client";
+import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/provider";
-import { useForm } from "react-hook-form";
+import { RoomResponse, ListRoomsResponse } from "../../src/api/dto";
+import { Ionicons } from "@expo/vector-icons";
+import { getAuthHeaders } from "@/api/client";
 
-export default function MyRoomsScreen() {
-  const navigation = useNavigation();
-  const route = useRoute();
-  const { user } = useAuth();
+export default function RoomsScreen() {
+  const router = useRouter();
+  const { user, isLoading: authIsLoading, loginStatus } = useAuth();
 
-  const [rooms, setRooms] = useState<RoomResponse[]>([]);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  if (authIsLoading) {
+    return null;
+  }
 
-  const [form] = useForm();
-  const { watch } = form;
+  if (loginStatus === "unauthenticated") {
+    return null;
+  }
 
-  const loadRooms = async (pageNum: number, reset = false) => {
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(20);
+  const [rooms, setRooms] = React.useState<RoomResponse[]>([]);
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [isLoadingMore, setIsLoadingMore] = React.useState(false);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const loadRooms = async (pageNum: number, reset: boolean) => {
+    setIsLoading(true);
+    setError(null);
     try {
-      const result = await request<ListRoomsResponse>("GET", "/api/rooms", {
-        headers: await getAuthHeaders(),
-        // Note: The backend supports pagination via query params
-        // but we need to pass them as part of the URL or handle differently
-        // For now, we'll get the first page and the frontend will manage pagination
+      const headers = await getAuthHeaders();
+      const url = `${process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000"}/api/rooms?page=${pageNum}&pageSize=${pageSize}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
       });
-
-      if (reset) {
-        setRooms(result);
-      } else {
-        setRooms((prev) => [...prev, ...result]);
-      }
-    } catch (err) {
-      console.error("Error loading rooms:", err);
+      const data: ListRoomsResponse = await response.json();
+      setRooms(reset ? data : [...rooms, ...data]);
+      setPage(pageNum + 1);
+    } catch (err: any) {
+      setError(err.message || "Error al cargar salas");
     } finally {
-      setRefreshing(false);
-      setLoadingMore(false);
+      setIsLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadRooms(1, true);
-  }, [user]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
+  const doRefresh = async () => {
+    setIsRefreshing(true);
     setPage(1);
     await loadRooms(1, true);
+    setIsRefreshing(false);
   };
 
   const loadMore = async () => {
-    setPage((prev) => prev + 1);
-    setLoadingMore(true);
-    await loadRooms(page);
+    if (isLoadingMore || isRefreshing) return;
+    setIsLoadingMore(true);
+    await loadRooms(page, false);
+    setIsLoadingMore(false);
   };
 
-  if (user?.isLoading || user?.loginStatus === "checking") {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
-
-  if (!user) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <Text>No hay sesión activa</Text>
-        <Button title="Volver al login" onPress={() => navigation.navigate("Login")} />
-      </View>
-    );
-  }
+  React.useEffect(() => {
+    loadRooms(1, true);
+  }, [loginStatus]);
 
   return (
-    <View style={styles.container}>
-      <FlatList
-        data={rooms}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.roomItem}
-            onPress={() => navigation.navigate("(app)/room", { id: item.id })}
-          >
-            <View style={styles.roomInfo}>
-              <Text style={styles.roomName}>{item.nombre}</Text>
-              <Text style={styles.roomCode}>Código: {item.codigo}</Text>
-              <Text style={styles.roomState}>
-                Estado: {item.estado}{" "}
-                {item.hasEnded ? " (finalizada)" : ""}
-              </Text>
-            </View>
-            <ArrowForwardIos style={styles.arrow} />
-          </TouchableOpacity>
-        )}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            title="Actualizando..."
-          />
-        }
-        inverted
-        horizontal
-        showsHorizontalScrollIndicator={false}
-      />
-      {/* Empty state when no rooms */}
-      {rooms.length === 0 && (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>
-            No tienes salas aún. <Button title="Crear sala" onPress={() => navigation.navigate("CreateRoom")} />
-          </Text>
+    <ScrollView
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={doRefresh}
+        />
+      }
+      style={{ flexGrow: 1 }}
+    >
+      {authIsLoading || loginStatus === "checking" ? (
+        <ActivityIndicator size="large" />
+      ) : error ? (
+        <View style={styles.error}>
+          <Text>{error}</Text>
+          <Button title="Reintentar" onPress={doRefresh} />
         </View>
+      ) : rooms.length === 0 ? (
+        <View style={styles.empty}>
+          <Text>No hay salas programadas. ¡Sé el primero en crear una!</Text>
+          <Button title="Crear sala" onPress={() => router.push("/(app)/create")} />
+        </View>
+      ) : (
+        rooms.map((room) => (
+          <View key={room.id} style={styles.room}>
+            <Text style={styles.roomTitle}>{room.nombre}</Text>
+            <Text style={styles.roomCode}>Código: {room.codigo}</Text>
+            <Ionicons name="chevron-forward" size={20} color="#888" />
+          </View>
+        ))
       )}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20 },
-  roomItem: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    marginRight: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-    overflow: "hidden",
-    minWidth: 150,
+  error: {
+    padding: 20,
+    textAlign: "center",
+    color: "red",
   },
-  roomInfo: {
-    flexDirection: "column",
-    alignItems: "flex-start",
-  },
-  roomName: { fontSize: 18, fontWeight: "bold", marginBottom: 4 },
-  roomCode: { fontSize: 14, color: "#64748b", marginBottom: 2 },
-  roomState: { fontSize: 12, color: "#64748b" },
-  arrow: { fontSize: 16, marginLeft: 8 },
-  emptyState: {
+  empty: {
     padding: 40,
-    alignItems: "center",
-    justifyContent: "center",
+    textAlign: "center",
   },
-  emptyText: { fontSize: 16, color: "#64748b", textAlign: "center" },
+  room: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: "#ccc",
+    alignItems: "center",
+  },
+  roomTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 4,
+  },
+  roomCode: {
+    fontSize: 14,
+    color: "#666",
+  },
 });

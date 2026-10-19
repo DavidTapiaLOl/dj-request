@@ -1,286 +1,291 @@
 import * as React from "react";
+import { useEffect } from "react";
 import {
   View,
   Text,
   TextInput,
   Button,
-  ActivityIndicator,
-  TouchableOpacity,
   Alert,
+  ActivityIndicator,
+  RefreshControl,
+  TouchableOpacity,
   ScrollView,
-  SafeAreaView,
-  Share,
-  Platform,
-  ToastAndroid,
-  Keyboard,
   StyleSheet,
-  Image,
-  Clipboard,
+  Linking,
 } from "react-native";
-import QrCode from "react-native-qrcode-svg";
+import QRCode from "react-native-qrcode-svg";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation, useRoute } from "@react-navigation/native";
-import { useEffect, useState } from "react";
-
-import { request } from "../../../src/api/client";
-import { useAuth } from "../../../src/auth/provider";
-import { RoomResponse } from "../../../src/api/dto";
-
+import { useAuth } from "@/auth/provider";
+import { useRouter } from "expo-router";
+import { request } from "@/api/client";
+import { RoomResponse } from "@/api/dto";
+import { getAuthHeaders } from "@/api/client";
 export default function RoomDetailScreen() {
-  const navigation = useNavigation();
-  const route = useRoute();
-  const { id } = route.params || {};
-  const { user } = useAuth();
+  const router = useRouter();
+  const [id, setId] = React.useState<string | null>(null);
 
-  const [room, setRoom] = useState<RoomResponse | null>(null);
-  const [state, setState] = React.useState<"abierta" | "pausada" | "cerrada">("abierta");
-  const [version, setVersion] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showShare, setShowShare] = useState(false);
-  const [isClosing, setIsClosing] = useState(false);
-
-  // Load room detail
   useEffect(() => {
+    // Try to get id from router params or URL
+    const params: any = router;
+    if (params?.params?.id) {
+      setId(params.params.id);
+    }
+    // Fallback: try to extract from URL
     if (!id) {
-      setError("ID de sala no proporcionado");
-      setLoading(false);
+      Linking.getInitialURL().then((initialURL) => {
+        if (initialURL) {
+          const url = new URL(initialURL, "http://localhost");
+          const searchParams = new URLSearchParams(url.search);
+          const initialId = searchParams.get("id");
+          if (initialId) {
+            setId(initialId);
+          }
+        }
+      });
+    }
+  }, []);
+
+  const [state, setState] = React.useState<string | null>(null);
+  const [room, setRoom] = React.useState<RoomResponse | null>(null);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const loadRoom = React.useCallback(
+    async () => {
+      if (!id) return;
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch(
+          `${process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000"}/api/rooms/${id}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              ...headers,
+            },
+          }
+        );
+
+        if (response.status === 409) {
+          const errorData = await response.json().catch(() => ({}));
+          setError(errorData.detail || "Conflicto de estado. Recargando...");
+          setTimeout(() => loadRoom(), 1500);
+          return;
+        }
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          setError(errorData.detail || "No se pudo cargar la sala");
+          return;
+        }
+
+        const data = await response.json();
+        setRoom(data);
+        setState(data.estado);
+      } catch (err: any) {
+        setError(err.message || "Error de red");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [id]
+  );
+
+  React.useEffect(() => {
+    loadRoom();
+  }, [loadRoom]);
+
+  const handleStateChange = async (newState: string) => {
+    if (!id || isSaving) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000"}/api/rooms/${id}/state`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            ...headers,
+          },
+          body: JSON.stringify({ estado: newState }),
+        }
+      );
+
+      if (response.status === 409) {
+        const errorData = await response.json().catch(() => ({}));
+        setError(errorData.detail || "Conflicto de estado");
+        setTimeout(() => loadRoom(), 1500);
+        setIsSaving(false);
+        return;
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        setError(errorData.detail || "Error al cambiar estado");
+        setIsSaving(false);
+        return;
+      }
+
+      const data = await response.json();
+      setState(newState);
+      setIsSaving(false);
+    } catch (err: any) {
+      if (err instanceof Error && err.message.includes("Network error")) {
+        Alert.alert("Error de red", "No se puede conectar con el servidor");
+      } else {
+        Alert.alert("Error", "Error al cambiar el estado de la sala");
+      }
+      setIsSaving(false);
+    }
+  };
+
+  const handleClose = async () => {
+    const confirmed = await Alert.alert(
+      "Confirmar cierre",
+      "¿Estás seguro de que quieres cerrar la sala? Esto desconectará a los participantes.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Cerrar",
+          style: "destructive",
+          onPress: async () => {
+            await handleStateChange("cerrada");
+          },
+        },
+      ]
+    );
+  };
+
+  const handleShareQR = async () => {
+    if (!room?.inviteUrl) {
+      Alert.alert("Error", "No hay URL de invitación disponible");
       return;
     }
 
-    async function loadRoom() {
-      try {
-        const result = await request<RoomResponse>("GET", `/api/rooms/${id}`, {
-          headers: await useAuth().getAuthHeaders(),
-        });
-        setRoom(result);
-        setVersion(result.version);
-        setState(result.estado);
-      } catch (err: any) {
-        setError(err.detail || err.message || "Error al cargar la sala");
-      } finally {
-        setLoading(false);
-      }
+    try {
+      await Linking.openURL(room.inviteUrl);
+    } catch (err) {
+      Alert.alert("Error", "No se pudo compartir la QR");
     }
-
-    loadRoom();
-  }, [id, user]);
-
-  if (loading) {
-    return (
-      <SafeAreaView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" />
-      </SafeAreaView>
-    );
-  }
-
-  if (error) {
-    return (
-      <SafeAreaView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <Text style={{ fontSize: 18, color: "#ef4444" }}>{error}</Text>
-        <Button title="Volver" onPress={() => navigation.goBack()} />
-      </SafeAreaView>
-    );
-  }
+  };
 
   if (!room) {
-    return (
-      <SafeAreaView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <Text>Sala no encontrada</Text>
-        <Button title="Volver" onPress={() => navigation.goBack()} />
-      </SafeAreaView>
+    return isLoading ? (
+      <ActivityIndicator size="large" />
+    ) : (
+      <Text>Sala no encontrada</Text>
     );
   }
 
-  // Disable state changes if room has ended
-  const canModify = !room.hasEnded;
-
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#f0e6ff" }}>
-      <ScrollView contentContainerStyle={{ padding: 20, maxWidth: 400 }}>
-        <Text style={{ fontSize: 24, fontWeight: "bold", marginBottom: 20 }}>
-          Sala: {room.nombre}
-        </Text>
-
-        {/* Room details */}
-        <View style={{ marginBottom: 20 }}>
-          <Text style={{ fontSize: 14, color: "#64748b" }}>Código:</Text>
-          <TextInput
-            style={{
-              width: "100%", height: 50,
-              borderWidth: 1, borderColor: "#c0c0c0",
-              borderRadius: 8, paddingHorizontal: 12,
-              backgroundColor: "#fff", fontSize: 16,
-              fontFamily: "monospace",
-            }}
-            editable={false}
-            value={room.codigo}
-          />
+    <ScrollView
+      refreshControl={
+        <RefreshControl
+          refreshing={isLoading}
+          onRefresh={() => loadRoom()}
+          tintColor="#8a2be2"
+        />
+      }
+      style={{ flexGrow: 1 }}
+    >
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>{room.nombre}</Text>
+          <Text style={styles.code}>Código: {room.codigo}</Text>
         </View>
 
-        <View style={{ marginBottom: 20 }}>
-          <Text style={{ fontSize: 14, color: "#64748b" }}>Código de invitación:</Text>
-          <Text style={{ fontSize: 12, color: "#8a2be2", fontFamily: "monospace" }}>
-            {room.inviteUrl}
-          </Text>
+        <View style={styles.info}>
+          <Text style={styles.label}>Estado:</Text>
+          <Text style={styles.value}>{state || "cargando..."}</Text>
         </View>
 
-        {/* QR Code from inviteUrl */}
-        <View style={{ marginBottom: 20, alignItems: "center" }}>
-          <QrCode
+        {state === "abierta" && (
+          <View style={styles.actions}>
+            <Button title="Pausar" onPress={() => handleStateChange("pausada") } />
+            <Button title="Cerrar" onPress={handleClose} color="red" />
+          </View>
+        )}
+
+        {state === "pausada" && (
+          <View style={styles.actions}>
+            <Button title="Reabrir" onPress={() => handleStateChange("abierta") } />
+            <Button title="Cerrar" onPress={handleClose} color="red" />
+          </View>
+        )}
+
+        {state === "cerrada" && (
+          <View style={styles.actions}>
+            <Button title="Reactivar" onPress={() => handleStateChange("abierta")} />
+          </View>
+        )}
+
+        <View style={styles.qrSection}>
+          <Text style={styles.qrTitle}>Código QR</Text>
+          <QRCode
             value={room.inviteUrl}
             size={200}
+            color="#8a2be2"
           />
-          <Text style={{ fontSize: 12, marginTop: 8, color: "#64748b" }}>
-            Escanear para unirte
-          </Text>
+          <Button title="Compartir QR" onPress={handleShareQR} />
         </View>
-
-        {/* Share button */}
-        <TouchableOpacity
-          onPress={() => setShowShare(true)}
-          style={{
-            marginBottom: 20,
-            padding: 12,
-            backgroundColor: "#8a2be2",
-            borderRadius: 8,
-            alignItems: "center",
-          }}
-        >
-          <Text style={{ color: "white", fontSize: 16 }}>Compartir código</Text>
-        </TouchableOpacity>
-
-        {/* State management - only if canModify */}
-        {canModify && (
-          <View style={{ marginBottom: 20 }}>
-            <Text style={{ fontSize: 14, marginBottom: 8 }}>Cambiar estado</Text>
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <TouchableOpacity
-                disabled={isClosing}
-                onPress={() => handleStateChange("pausada")}
-                style={[
-                  styles.stateButton,
-                  { backgroundColor: state === "pausada" ? "#8a2be2" : "#e5e7eb" },
-                  { color: state === "pausada" ? "white" : "#64748b" },
-                ]}
-              >
-                <Ionicons name="pause-circle" size={20} color="currentColor" />
-                <Text style={{ fontSize: 14, marginLeft: 4 }}>Pausar</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                disabled={isClosing}
-                onPress={() => handleStateChange("abierta")}
-                style={[
-                  styles.stateButton,
-                  { backgroundColor: state === "abierta" ? "#8a2be2" : "#e5e7eb" },
-                  { color: state === "abierta" ? "white" : "#64748b" },
-                ]}
-              >
-                <Ionicons name="ios-outline" size={20} color="currentColor" />
-                <Text style={{ fontSize: 14, marginLeft: 4 }}>Reabrir</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                disabled={!canModify || isClosing}
-                onPress={() => handleStateChange("cerrada")}
-                style={[
-                  styles.stateButton,
-                  { backgroundColor: "#ef4444", color: "white" },
-                ]}
-              >
-                <Ionicons name="trash" size={20} color="currentColor" />
-                <Text style={{ fontSize: 14, marginLeft: 4 }}>Cerrar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* Note about web guests */}
-        <View style={{ marginTop: 20, padding: 12, backgroundColor: "#f3f4f6", borderRadius: 8 }}>
-          <Text style={{ fontSize: 12, color: "#64748b" }}>
-            ⚠ La web de invitados aún está pendiente. El QR no permite pedir canciones en esta entrega.
-          </Text>
-        </View>
-
-        {/* Share sheet */}
-        {showShare && (
-          <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-            <TouchableOpacity
-              onPress={() => Share.share({
-                url: room.inviteUrl,
-                message: `Únete a la sala ${room.nombre} con código ${room.codigo}`,
-              })}
-              style={{
-                width: 300, height: 44,
-                backgroundColor: "#8a2be2",
-                borderRadius: 8,
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: "white", fontSize: 16 }}>Compartir enlace</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setShowShare(false)}
-              style={{
-                width: 300, height: 44,
-                backgroundColor: "#647474",
-                borderRadius: 8,
-                marginTop: 16,
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: "white", fontSize: 16 }}>Cancelar</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+      </View>
+    </ScrollView>
   );
-
-  async function handleStateChange(newState: "abierta" | "pausada" | "cerrada") {
-    if (!room || !canModify) return;
-
-    setIsClosing(true);
-    try {
-      const result = await request<RoomResponse>("PATCH", `/api/rooms/${room.id}/state`, {
-        body: { state: newState, version: room.version },
-        headers: await useAuth().getAuthHeaders(),
-      });
-
-      setState(newState);
-      setVersion(result.version);
-      setRoom(result);
-      Alert.alert(
-        "Éxito",
-        `Sala ${newState === "cerrada" ? "cerrada" : newState === "pausada" ? "pausada" : "reabierta"}`
-      );
-    } catch (err: any) {
-      if (err.status === 409) {
-        Alert.alert(
-          "La sala cambió",
-          "Los datos de la sala han sido actualizados por otro usuario. Por favor, recarga la sala.",
-          [{ text: "Entendido", onPress: () => loadRoom() }]
-        );
-        await loadRoom();
-      } else {
-        Alert.alert("Error", err.detail || err.message);
-      }
-    } finally {
-      setIsClosing(false);
-    }
-  }
 }
 
 const styles = StyleSheet.create({
-  stateButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 8,
-    justifyContent: "center",
+  container: {
+    flexGrow: 1,
+    padding: 20,
+    backgroundColor: "#f8f9fa",
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 4,
+    marginBottom: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: "#dee2e6",
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: "bold",
+  },
+  code: {
+    fontSize: 14,
+    color: "#666",
+  },
+  info: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 4,
+  },
+  value: {
+    fontSize: 18,
+    marginTop: 2,
+  },
+  actions: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 15,
+  },
+  qrSection: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: "#fff",
+    borderRadius: 8,
+  },
+  qrTitle: {
+    fontSize: 14,
+    fontWeight: "bold",
+    marginBottom: 8,
+    textAlign: "center",
   },
 });

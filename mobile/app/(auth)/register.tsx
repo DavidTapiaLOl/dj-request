@@ -4,43 +4,92 @@ import {
   Text,
   TextInput,
   Button,
-  ActivityIndicator,
   Alert,
+  ActivityIndicator,
+  StyleSheet,
   TouchableOpacity,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
-import { useForm } from "react-hook-form";
+import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/provider";
-import { registerSchema } from "../../src/api/dto";
-import { z } from "zod";
 
 export default function RegisterScreen() {
-  const navigation = useNavigation();
-
-  const {
-    register: formRegister,
-    handleSubmit,
-    reset,
-    watch,
-    formState: { errors, isSubmitting },
-  } = useForm<z.infer<typeof registerSchema>>({
-    mode: "onBlur",
-    defaultValues: {
-      email: "",
-      password: "",
-      artistName: "",
-    },
-  });
-
+  const router = useRouter();
   const { register } = useAuth();
 
-  const onSubmit = async (data: z.infer<typeof registerSchema>) => {
+  const [artistName, setArtistName] = React.useState("");
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [nameError, setNameError] = React.useState<string | null>(null);
+  const [emailError, setEmailError] = React.useState<string | null>(null);
+  const [passwordError, setPasswordError] = React.useState<string | null>(null);
+  const [nameTouched, setNameTouched] = React.useState(false);
+  const [emailTouched, setEmailTouched] = React.useState(false);
+  const [passwordTouched, setPasswordTouched] = React.useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  const onSubmit = async () => {
+    let valid = true;
+
+    if (!artistName.trim()) {
+      setNameError("Nombre obligatorio");
+      setNameTouched(true);
+      valid = false;
+    } else {
+      setNameError(null);
+    }
+
+    if (!email.trim()) {
+      setEmailError("Correo obligatorio");
+      setEmailTouched(true);
+      valid = false;
+    } else {
+      setEmailError(null);
+    }
+
+    if (!password.trim()) {
+      setPasswordError("Contraseña obligatoria");
+      setPasswordTouched(true);
+      valid = false;
+    } else {
+      setPasswordError(null);
+    }
+
+    if (!valid) return;
+
     try {
-      await register(data.email, data.password, data.artistName);
+      setIsSubmitting(true);
+      await register(email, password, artistName);
       Alert.alert("Éxito", "Cuenta creada. Ahora puedes iniciar sesión.");
-      navigation.navigate("Login");
-    } catch (err) {
-      Alert.alert("Error", "No se pudo crear la cuenta. Verifica los datos.");
+      router.replace("/(app)");
+    } catch (err: any) {
+      if (err instanceof Error && err.message.includes("Network error")) {
+        Alert.alert("Error de red", "No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
+      } else {
+        Alert.alert("Error", "No se pudo crear la cuenta. Verifica los datos.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const onNameBlur = () => {
+    setNameTouched(true);
+    if (!artistName.trim()) {
+      setNameError("Nombre obligatorio");
+    }
+  };
+
+  const onEmailBlur = () => {
+    setEmailTouched(true);
+    if (!email.trim()) {
+      setEmailError("Correo obligatorio");
+    }
+  };
+
+  const onPasswordBlur = () => {
+    setPasswordTouched(true);
+    if (!password.trim()) {
+      setPasswordError("Contraseña obligatoria");
     }
   };
 
@@ -58,15 +107,20 @@ export default function RegisterScreen() {
         Registro
       </Text>
 
-      <form onSubmit={handleSubmit(onSubmit)} style={{ width: "100%", maxWidth: 350 }}>
+      <View style={{ width: "100%", maxWidth: 350 }}>
         {/* Artist Name */}
         <TextInput
           placeholder="Nombre artístico"
-          autoCompleteName="artistName"
+          value={artistName}
+          onChangeText={(text) => {
+            setArtistName(text);
+            if (nameError) setNameError(null);
+          }}
+          onBlur={onNameBlur}
           style={{
             width: "100%",
             height: 50,
-            borderColor: "#c0c0c0",
+            borderColor: nameTouched && artistName === "" ? "#ff0000" : "#c0c0c0",
             borderWidth: 1,
             borderRadius: 8,
             paddingHorizontal: 12,
@@ -74,23 +128,24 @@ export default function RegisterScreen() {
             fontSize: 16,
             backgroundColor: "#fff",
           }}
-          value={watch("artistName")}
-          onChange={formRegister}
         />
-        {errors.artistName && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{errors.artistName.message}</Text>
+        {nameTouched && nameError && (
+          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{nameError}</Text>
         )}
 
         {/* Email */}
         <TextInput
           placeholder="Correo electrónico"
-          autoCompleteName="email"
-          autoCapitalize="none"
-          keyboardType="email-address"
+          value={email}
+          onChangeText={(text) => {
+            setEmail(text);
+            if (emailError) setEmailError(null);
+          }}
+          onBlur={onEmailBlur}
           style={{
             width: "100%",
             height: 50,
-            borderColor: "#c0c0c0",
+            borderColor: emailTouched && email === "" ? "#ff0000" : "#c0c0c0",
             borderWidth: 1,
             borderRadius: 8,
             paddingHorizontal: 12,
@@ -98,22 +153,25 @@ export default function RegisterScreen() {
             fontSize: 16,
             backgroundColor: "#fff",
           }}
-          value={watch("email")}
-          onChange={formRegister}
         />
-        {errors.email && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{errors.email.message}</Text>
+        {emailTouched && emailError && (
+          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>Correo obligatorio</Text>
         )}
 
         {/* Password */}
         <TextInput
           placeholder="Contraseña"
           secureTextEntry
-          autoCompleteCurrentPassword
+          value={password}
+          onChangeText={(text) => {
+            setPassword(text);
+            if (passwordError) setPasswordError(null);
+          }}
+          onBlur={onPasswordBlur}
           style={{
             width: "100%",
             height: 50,
-            borderColor: "#c0c0c0",
+            borderColor: passwordTouched && password === "" ? "#ff0000" : "#c0c0c0",
             borderWidth: 1,
             borderRadius: 8,
             paddingHorizontal: 12,
@@ -121,28 +179,28 @@ export default function RegisterScreen() {
             fontSize: 16,
             backgroundColor: "#fff",
           }}
-          value={watch("password")}
-          onChange={formRegister}
         />
-        {errors.password && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{errors.password.message}</Text>
+        {passwordTouched && passwordError && (
+          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>Contraseña obligatoria</Text>
         )}
 
-        <TouchableOpacity
-          disabled={isSubmitting}
-          style={{
-            width: "100%",
-            height: 48,
-            backgroundColor: "#8a2be2",
-            borderRadius: 8,
-            justifyContent: "center",
-            alignItems: "center",
-            marginTop: 10,
-          }}
-          onPress={handleSubmit(onSubmit)}
-        >
-          <Text style={{ color: "white", fontSize: 16 }}>Crear cuenta</Text>
-        </TouchableOpacity>
+        {/* Buttons */}
+        <View style={{ width: "100%", flexDirection: "row", justifyContent: "space-between" }}>
+          <TouchableOpacity
+            disabled={isSubmitting}
+            style={{
+              width: "100%",
+              height: 48,
+              backgroundColor: "#8a2be2",
+              borderRadius: 8,
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+            onPress={onSubmit}
+          >
+            <Text style={{ color: "white", fontSize: 16 }}>Crear cuenta</Text>
+          </TouchableOpacity>
+        </View>
 
         <Text
           style={{
@@ -150,9 +208,11 @@ export default function RegisterScreen() {
             color: "#64748b",
             fontSize: 14,
           }}>
-          ¿Ya tienes cuenta? <Text onPress={() => navigation.navigate("Login")}>Inicia sesión</Text>
-        </Text>
-      </form>
+            ¿Ya tienes cuenta? <Text onPress={() => router.push("/(auth)/login")}>Inicia sesión</Text>
+          </Text>
+      </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({});

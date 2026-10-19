@@ -64,30 +64,34 @@ export type ListRoomsResponse = RoomResponse[];
 
 export const loginSchema = z.object({
   email: z.string().email("Email inválido"),
-  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
+  password: z.string(),
 });
 
 export const registerSchema = z.object({
   email: z.string().email("Email inválido"),
-  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
-  artistName: z.string().min(2, "Nombre de artista requerido"),
+  password: z.string().min(12, "La contraseña debe tener al menos 12 caracteres"),
+  artistName: z
+    .string()
+    .min(2, "Nombre de artista requerido")
+    .max(100, "Nombre de artista demasiado largo"),
 });
 
-// --- Esquema para creación de sala (ya existía) ---
+// --- Esquema para creación de sala ---
 
 export const createRoomSchema = z.object({
-  name: z.string().min(1, "Nombre requerido"),
-  startsAt: z
+  name: z
     .string()
-    .regex(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/,
-      "Formato de fecha inválido"
-    ),
-  endsAt: z
-    .string()
-    .regex(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/,
-      "Formato de fecha inválido"
-    ),
-  timezone: z.string().optional(),
+    .min(1, "Nombre requerido")
+    .max(120, "El nombre de la sala es demasiado largo"),
+  startsAt: z.string().datetime({ offset: true, message: "Formato de fecha inválido" }),
+  endsAt: z.string().datetime({ offset: true, message: "Formato de fecha inválido" }),
+  timezone: z.string().default("America/Mexico_City").optional(),
+})
+.refine(data => new Date(data.endsAt) > new Date(data.startsAt), {
+  message: "La fecha de fin debe ser posterior a la de inicio",
+  path: ["endsAt"],
+})
+.refine(data => new Date(data.endsAt) > new Date(), {
+  message: "La fecha de fin debe ser posterior al momento actual",
+  path: ["endsAt"],
 });
