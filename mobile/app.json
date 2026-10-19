@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "dj-mobile",
+    "slug": "dj-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "jsEngine": "hermes",
+    "scheme": "dj-mobile",
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "faceIdApiName": "expo-face-id"
+        }
+      ],
+      "expo-router",
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "apiUrl": "http://YOUR_IPv4_LAN_HERE:5000"
+    }
+  }
+}
