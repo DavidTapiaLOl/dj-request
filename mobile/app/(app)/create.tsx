@@ -2,18 +2,19 @@ import * as React from "react";
 import {
   View,
   Text,
-  TextInput,
-  Button,
-  Alert,
-  ActivityIndicator,
   StyleSheet,
-  TouchableOpacity,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/provider";
 import { createRoomSchema } from "../../src/api/dto";
 import { RoomResponse } from "@/api/dto";
-import { request } from "@/api/client";
+import { request, ApiError, NetworkError } from "@/api/client";
+import DateTimeField from "../../src/components/DateTimeField";
+import { ScreenContainer } from "@/components/ScreenContainer";
+import { ScreenHeader } from "@/components/ScreenHeader";
+import { AppButton } from "@/components/AppButton";
+import { AppTextField } from "@/components/AppTextField";
+import { colors, spacing, typography } from "@/theme/theme";
 
 function parseLocalDateTime(input: string): { year: number; month: number; day: number; hour: number; minute: number } | null {
   const match = input.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/);
@@ -51,6 +52,7 @@ export default function CreateScreen() {
   const [nameTouched, setNameTouched] = React.useState(false);
   const [startsAtTouched, setStartsAtTouched] = React.useState(false);
   const [endsAtTouched, setEndsAtTouched] = React.useState(false);
+  const createdRoomIdRef = React.useRef<string | null>(null);
 
   const onNameBlur = () => {
     setNameTouched(true);
@@ -59,35 +61,7 @@ export default function CreateScreen() {
     }
   };
 
-  const onStartsAtBlur = () => {
-    setStartsAtTouched(true);
-    if (!startsAtInput.trim()) {
-      setStartsAtError("Fecha requerida");
-    } else {
-      const parsed = parseLocalDateTime(startsAtInput);
-      if (!parsed) {
-        setStartsAtError("Formato de fecha inválido. Use AAAA-MM-DD HH:mm");
-      } else {
-        setStartsAtError(null);
-      }
-    }
-  };
-
-  const onEndsAtBlur = () => {
-    setEndsAtTouched(true);
-    if (!endsAtInput.trim()) {
-      setEndsAtError("Fecha requerida");
-    } else {
-      const parsed = parseLocalDateTime(endsAtInput);
-      if (!parsed) {
-        setEndsAtError("Formato de fecha inválido. Use AAAA-MM-DD HH:mm");
-      } else {
-        setEndsAtError(null);
-      }
-    }
-  };
-
-const onSubmit = async () => {
+  const onSubmit = async () => {
     setGeneralError(null);
     let valid = true;
     let parsedStart: { year: number; month: number; day: number; hour: number; minute: number } | undefined;
@@ -211,27 +185,39 @@ const onSubmit = async () => {
     // 8. Enviar con request() del cliente API
     setIsSubmitting(true);
     try {
-      const room: RoomResponse = await request<RoomResponse>("POST", "/api/rooms", {
-        body: {
-          name: validated.data.name,
-          startsAt: validated.data.startsAt,
-          endsAt: validated.data.endsAt,
-          timezone: validated.data.timezone || "America/Mexico_City",
-        },
-      });
+      // Si la sala ya fue creada, no repetir el POST; solo reintentar la navegación.
+      let room: RoomResponse;
+      if (createdRoomIdRef.current) {
+        room = { id: createdRoomIdRef.current } as RoomResponse;
+      } else {
+        room = await request<RoomResponse>("POST", "/api/rooms", {
+          body: {
+            name: validated.data.name,
+            startsAt: validated.data.startsAt,
+            endsAt: validated.data.endsAt,
+            timezone: validated.data.timezone || "America/Mexico_City",
+          },
+        });
+        createdRoomIdRef.current = room.id;
+      }
 
-      // request lanza ApiError en caso de error; si llegamos aquí, fue 2xx
-      const roomId = room.id;
-      if (roomId) {
-        router.push(`/(app)/room/${roomId}`);
+      if (room.id) {
+        router.push(`/(app)/room/${room.id}`);
       } else {
         setGeneralError("La respuesta no contiene el ID de la sala");
       }
-    } catch (err: any) {
-      if (err instanceof Error && err.message.includes("Network error")) {
-        setGeneralError("No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
-      } else if (err instanceof Error) {
-        // ApiError del cliente: mensaje ya incluye status y detail
+    } catch (err) {
+      if (err instanceof NetworkError) {
+        if (createdRoomIdRef.current) {
+          setGeneralError(
+            "La sala fue creada, pero no pudimos abrir el detalle. Revisa tu conexión y reintenta."
+          );
+        } else {
+          setGeneralError(
+            "No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo."
+          );
+        }
+      } else if (err instanceof ApiError) {
         setGeneralError(err.message || "Error inesperado al crear la sala");
       } else {
         setGeneralError("Error inesperado al crear la sala");
@@ -242,123 +228,102 @@ const onSubmit = async () => {
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 20,
-        backgroundColor: "#f0e6ff",
-      }}
-    >
-      <Text style={{ fontSize: 24, fontWeight: "bold", marginBottom: 20 }}>
-        Crear sala
-      </Text>
+    <ScreenContainer>
+      <ScreenHeader
+        showBack={true}
+        onBack={() => router.back()}
+      />
 
-      <View style={{ width: "100%", maxWidth: 360 }}>
-        {/* Nombre */}
-        <TextInput
-          placeholder="Nombre de la sala"
+      <View style={styles.formContainer}>
+        <AppTextField
+          label="Nombre de la sala"
           value={name}
-          onChangeText={(text) => {
+          onChange={(text) => {
             setName(text);
             if (nameError) setNameError(null);
           }}
-          onBlur={onNameBlur}
-          style={{
-            width: "100%",
-            height: 50,
-            borderColor: nameTouched && name === "" ? "#ff0000" : "#c0c0c0",
-            borderWidth: 1,
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            marginBottom: 12,
-            fontSize: 16,
-            backgroundColor: "#fff",
-          }}
+          helpText="El nombre de la sala es obligatorio"
+          hasError={nameTouched && !!nameError}
         />
         {nameTouched && nameError && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{nameError}</Text>
+          <Text style={styles.errorText}>{nameError}</Text>
         )}
 
-        {/* Fecha de inicio */}
-        <TextInput
-          placeholder="AAAA-MM-DD HH:mm"
+        <DateTimeField
+          label="Inicio del evento"
           value={startsAtInput}
-          onChangeText={(text) => {
-            setStartsAtInput(text);
+          onChange={(v) => {
+            setStartsAtInput(v);
+            setStartsAtTouched(true);
             if (startsAtError) setStartsAtError(null);
           }}
-          onBlur={onStartsAtBlur}
-          style={{
-            width: "100%",
-            height: 50,
-            borderColor: startsAtTouched && startsAtInput === "" ? "#ff0000" : "#c0c0c0",
-            borderWidth: 1,
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            marginBottom: 12,
-            fontSize: 16,
-            backgroundColor: "#fff",
-          }}
+          hasError={startsAtTouched && !!startsAtError}
         />
         {startsAtTouched && startsAtError && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{startsAtError}</Text>
+          <Text style={styles.errorText}>{startsAtError}</Text>
         )}
 
-        {/* Fecha de fin */}
-        <TextInput
-          placeholder="AAAA-MM-DD HH:mm"
+        <DateTimeField
+          label="Fin del evento"
           value={endsAtInput}
-          onChangeText={(text) => {
-            setEndsAtInput(text);
+          onChange={(v) => {
+            setEndsAtInput(v);
+            setEndsAtTouched(true);
             if (endsAtError) setEndsAtError(null);
           }}
-          onBlur={onEndsAtBlur}
-          style={{
-            width: "100%",
-            height: 50,
-            borderColor: endsAtTouched && endsAtInput === "" ? "#ff0000" : "#c0c0c0",
-            borderWidth: 1,
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            marginBottom: 20,
-            fontSize: 16,
-            backgroundColor: "#fff",
-          }}
+          hasError={endsAtTouched && !!endsAtError}
         />
         {endsAtTouched && endsAtError && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{endsAtError}</Text>
+          <Text style={styles.errorText}>{endsAtError}</Text>
         )}
 
-        <Text style={{ marginTop: 20, color: "#64748b", fontSize: 14 }}>
+        <Text style={styles.zoneText}>
           Las horas se interpretan en la zona de tu dispositivo
         </Text>
 
-        <TouchableOpacity
-          disabled={isSubmitting}
-          style={{
-            width: "100%",
-            height: 48,
-            backgroundColor: "#8a2be2",
-            borderRadius: 8,
-            justifyContent: "center",
-            alignItems: "center",
-            marginTop: 10,
-          }}
+        <AppButton
+          title="Crear sala"
+          iconName="add"
           onPress={onSubmit}
-        >
-          <Text style={{ color: "white", fontSize: 16 }}>{isSubmitting ? "Creando..." : "Crear sala"}</Text>
-        </TouchableOpacity>
-
-        {generalError && (
-          <View style={{ padding: 12, backgroundColor: "#ffeef0", borderRadius: 8, marginTop: 12, alignItems: "center" }}>
-            <Text style={{ color: "red", fontSize: 12 }}>{generalError}</Text>
-          </View>
-        )}
+          style={styles.createButton}
+          disabled={isSubmitting}
+        />
       </View>
-    </View>
+
+      {generalError && (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>{generalError}</Text>
+        </View>
+      )}
+    </ScreenContainer>
   );
 }
 
-const styles = StyleSheet.create({});
+const styles = StyleSheet.create({
+  formContainer: {
+    width: "100%",
+    maxWidth: 360,
+    // backgroundColor transparente (hereda del ScreenContainer)
+  },
+  errorText: {
+    fontSize: 12,
+    color: colors.danger,
+    marginBottom: spacing.xs,
+  },
+  zoneText: {
+    ...typography.small,
+    color: colors.textSecondary,
+    marginTop: spacing.md,
+  },
+  createButton: {
+    width: "100%",
+    marginTop: spacing.md,
+  },
+  errorBox: {
+    padding: 12,
+    backgroundColor: "#ffeef0",
+    borderRadius: 8,
+    marginTop: 12,
+    alignItems: "center",
+  },
+});

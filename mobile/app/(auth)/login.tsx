@@ -1,20 +1,15 @@
 import * as React from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  Button,
-  Alert,
-  ActivityIndicator,
-  StyleSheet,
-  TouchableOpacity,
-} from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/provider";
+import { AppButton } from "@/components/AppButton";
+import { AppTextField } from "@/components/AppTextField";
+import { AuthScreenContainer } from "@/components/AuthScreenContainer";
+import { colors, spacing } from "@/theme/theme";
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, restoreError } = useAuth();
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -23,6 +18,7 @@ export default function LoginScreen() {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [emailTouched, setEmailTouched] = React.useState(false);
   const [passwordTouched, setPasswordTouched] = React.useState(false);
+  const [errorRed, setErrorRed] = React.useState<string | null>(null);
 
   const onSubmit = async () => {
     let valid = true;
@@ -51,9 +47,15 @@ export default function LoginScreen() {
       router.replace("/(app)");
     } catch (err: any) {
       if (err instanceof Error && err.message.includes("Network error")) {
-        Alert.alert("Error de red", "No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
+        setErrorRed("No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
+      } else if (err.status === 429) {
+        setErrorRed(
+          `Demasiados intentos. Inténtalo de nuevo en ${err.retryAfter || "un momento"}.`
+        );
+      } else if (err.status === 401) {
+        setErrorRed("Correo o contraseña incorrectos");
       } else {
-        Alert.alert("Error", "Credenciales inválidas. Inténtalo de nuevo.");
+        setErrorRed(err.message || "Error al iniciar sesión");
       }
     } finally {
       setIsSubmitting(false);
@@ -75,105 +77,124 @@ export default function LoginScreen() {
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 20,
-        backgroundColor: "#f0e6ff",
-      }}
-    >
-      <Text style={{ fontSize: 24, fontWeight: "bold", marginBottom: 20 }}>
-        Inicio de sesión
-      </Text>
-
-      <View style={{ width: "100%", maxWidth: 350 }}>
-        {/* Email */}
-        <TextInput
-          placeholder="Correo electrónico"
-          value={email}
-          onChangeText={(text) => {
-            setEmail(text);
-            if (emailError) setEmailError(null);
-          }}
-          onBlur={onEmailBlur}
-          style={{
-            width: "100%",
-            height: 50,
-            borderColor: emailTouched && email === "" ? "#ff0000" : "#c0c0c0",
-            borderWidth: 1,
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            marginBottom: 12,
-            fontSize: 16,
-            backgroundColor: "#fff",
-          }}
-        />
-        {emailTouched && emailError && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{emailError}</Text>
-        )}
-
-        {/* Password */}
-        <TextInput
-          placeholder="Contraseña"
-          secureTextEntry
-          value={password}
-          onChangeText={(text) => {
-            setPassword(text);
-            if (passwordError) setPasswordError(null);
-          }}
-          onBlur={onPasswordBlur}
-          style={{
-            width: "100%",
-            height: 50,
-            borderColor: passwordTouched && password === "" ? "#ff0000" : "#c0c0c0",
-            borderWidth: 1,
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            marginBottom: 20,
-            fontSize: 16,
-            backgroundColor: "#fff",
-          }}
-        />
-        {passwordTouched && passwordError && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>Contraseña obligatoria</Text>
-        )}
-
-        {/* Buttons */}
-        <View style={{ width: "100%", flexDirection: "row", justifyContent: "space-between" }}>
-          <TouchableOpacity
-            disabled={isSubmitting}
-            style={{
-              width: "48%",
-              height: 48,
-              backgroundColor: "#8a2be2",
-              borderRadius: 8,
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-            onPress={onSubmit}
-          >
-            <Text style={{ color: "white", fontSize: 16 }}>Entrar</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={{
-              width: "48%",
-              height: 48,
-              backgroundColor: "#6c757d",
-              borderRadius: 8,
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-            onPress={() => router.push("/(auth)/register")}
-          >
-            <Text style={{ color: "white", fontSize: 16 }}>Registrarse</Text>
-          </TouchableOpacity>
+    <AuthScreenContainer>
+      {restoreError === "session_expired" && (
+        <View style={styles.expiredBanner}>
+          <Text style={styles.expiredBannerText}>Tu sesión caducó. Inicia sesión de nuevo.</Text>
         </View>
+      )}
+
+      <AppTextField
+        label="Correo electrónico"
+        value={email}
+        onChangeText={(text) => {
+          setEmail(text);
+          if (emailError) setEmailError(null);
+        }}
+        onBlur={onEmailBlur}
+        autoComplete="email"
+        keyboardType="email-address"
+        placeholder="tu@correo.com"
+        placeholderTextColor={colors.textSecondary}
+        hasError={emailTouched && !!emailError}
+      />
+      {emailTouched && emailError && (
+        <Text style={styles.errorText}>{emailError}</Text>
+      )}
+
+      <AppTextField
+        label="Contraseña"
+        value={password}
+        onChangeText={(text) => {
+          setPassword(text);
+          if (passwordError) setPasswordError(null);
+        }}
+        onBlur={onPasswordBlur}
+        secureTextEntry={true}
+        autoComplete="current-password"
+        placeholder="Tu contraseña"
+        placeholderTextColor={colors.textSecondary}
+        hasError={passwordTouched && !!passwordError}
+      />
+      {passwordTouched && passwordError && (
+        <Text style={styles.errorText}>{passwordError}</Text>
+      )}
+
+      {errorRed && (
+        <View style={styles.errorRedBanner}>
+          <Text style={styles.errorRedText}>{errorRed}</Text>
+        </View>
+      )}
+
+      <AppButton
+        title="Entrar"
+        onPress={onSubmit}
+        variant="primary"
+        loading={isSubmitting}
+        disabled={isSubmitting}
+        style={styles.enterButton}
+      />
+
+      <View style={styles.linkContainer}>
+        <Text style={styles.linkText}>
+          ¿No tienes cuenta?{" "}
+          <Text style={styles.link} onPress={() => router.push("/(auth)/register")}>
+            Crear cuenta
+          </Text>
+        </Text>
       </View>
-    </View>
+    </AuthScreenContainer>
   );
 }
 
-const styles = StyleSheet.create({});
+const styles = StyleSheet.create({
+  expiredBanner: {
+    padding: spacing.md,
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.warning,
+    borderWidth: 1,
+    borderRadius: 12,
+    marginBottom: spacing.lg,
+  },
+  expiredBannerText: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    textAlign: "center",
+  },
+  errorText: {
+    color: colors.danger,
+    fontSize: 12,
+    marginBottom: spacing.sm,
+  },
+  errorRedBanner: {
+    padding: spacing.md,
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.danger,
+    borderWidth: 1,
+    borderRadius: 12,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  errorRedText: {
+    color: colors.danger,
+    fontSize: 13,
+    textAlign: "center",
+  },
+  enterButton: {
+    width: "100%",
+    marginTop: spacing.md,
+  },
+  linkContainer: {
+    marginTop: spacing.xl,
+    alignItems: "center",
+  },
+  linkText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+  },
+  link: {
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+});

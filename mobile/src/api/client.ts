@@ -15,7 +15,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
-    public type?: string
+    public type?: string,
+    public retryAfter?: string
   ) {
     super(message);
     this.name = "ApiError";
@@ -29,30 +30,64 @@ export class NetworkError extends Error {
   }
 }
 
-const BASE_URL = typeof process !== "undefined"
-  ? (process as any).env.EXPO_PUBLIC_API_URL
-  : "http://localhost:5000";
+const rawBaseUrl =
+  typeof process !== "undefined" ? process.env.EXPO_PUBLIC_API_URL : undefined;
+
+if (!rawBaseUrl) {
+  throw new Error(
+    "EXPO_PUBLIC_API_URL no está definida. Configúrala en el entorno antes de usar el cliente API."
+  );
+}
+
+const BASE_URL = rawBaseUrl.replace(/\/+$/, "");
 
 const PUBLIC_PATHS = ["/api/auth/login", "/api/auth/register", "/api/auth/refresh"];
+
+function isPublicPath(path: string): boolean {
+  return PUBLIC_PATHS.some((p) => path.startsWith(p));
+}
+
+type SessionRejectedCallback = () => void;
+let onSessionRejected: SessionRejectedCallback | null = null;
+
+export function setOnSessionRejected(cb: SessionRejectedCallback | null): void {
+  onSessionRejected = cb;
+}
+
+function notifySessionRejected(): void {
+  if (onSessionRejected) {
+    try {
+      onSessionRejected();
+    } catch {
+      // Ignorar errores del callback para no romper el flujo de la petición
+    }
+  }
+}
 
 export async function request<T>(
   method: Method,
   path: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  // Obtener headers de auth automáticamente (incluye Authorization: Bearer <token>)
-  // Excluir endpoints públicos para evitar conflictos con registro/login
-  const isPublicPath = PUBLIC_PATHS.some((p) => path.startsWith(p));
-  const authHeaders = isPublicPath
-    ? {}
-    : await getAuthHeaders();
+  const retryCount = options.retryCount ?? 0;
+  const publicPath = isPublicPath(path);
 
-  const url = `${BASE_URL}${path}`;
-  const headers = {
+  let authHeaders: Record<string, string> = {};
+  if (!publicPath) {
+    authHeaders = await getAuthHeaders();
+  }
+
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...authHeaders,
     ...options.headers,
   };
+
+  // Reconstruir Authorization con el token actual para evitar que un header
+  // antiguo proporcionado por la pantalla sobrescriba el token renovado.
+  if (!publicPath && authHeaders.Authorization) {
+    headers.Authorization = authHeaders.Authorization;
+  }
 
   let body: string | undefined;
   if (options.body !== undefined) {
@@ -73,21 +108,28 @@ export async function request<T>(
       fetchOptions.body = body;
     }
 
-    const response = await fetch(url, fetchOptions);
+    const response = await fetch(`${BASE_URL}${path}`, fetchOptions);
     clearTimeout(timeoutId);
+
+    if (response.status === 401 && !publicPath && retryCount === 0) {
+      // Intentar renovar sesión y reintentar UNA sola vez con el token nuevo
+      await refreshTokens();
+      return request<T>(method, path, {
+        ...options,
+        retryCount: 1,
+        headers: undefined,
+      });
+    }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-
-      if (options.retryCount === 0 && response.status === 401) {
-        await refreshAuth();
-        return request<T>(method, path, { ...options, retryCount: 1 } as any);
-      }
+      const retryAfter = response.headers.get("Retry-After") ?? undefined;
 
       throw new ApiError(
         response.status,
         errorData.detail || errorData.message || `Error ${response.status}`,
-        errorData.type
+        errorData.type,
+        retryAfter
       );
     }
 
@@ -96,7 +138,7 @@ export async function request<T>(
   } catch (err) {
     clearTimeout(timeoutId);
 
-    if (err instanceof ApiError) {
+    if (err instanceof ApiError || err instanceof NetworkError) {
       throw err;
     }
 
@@ -108,41 +150,77 @@ export async function request<T>(
       throw new NetworkError("Error de conexión de red");
     }
 
-    throw new NetworkError(
-      err instanceof Error ? err.message : "Error desconocido"
-    );
+    throw err instanceof Error ? err : new NetworkError("Error desconocido");
   }
 }
 
-let isRefreshing = false;
-let refreshPromise: Promise<void> | null = null;
+let refreshPromise: Promise<string> | null = null;
 
-async function refreshAuth(): Promise<void> {
-  if (isRefreshing) {
-    return refreshPromise!;
+async function refreshTokens(): Promise<string> {
+  if (refreshPromise) {
+    return refreshPromise;
   }
 
   refreshPromise = (async () => {
-    try {
-      const refreshToken = await Storage.getRefreshToken();
+    const refreshToken = await Storage.getRefreshToken();
 
-      if (!refreshToken) {
-        refreshPromise = null;
-        return;
+    if (!refreshToken) {
+      const err = new ApiError(401, "No hay token de actualización disponible.");
+      notifySessionRejected();
+      throw err;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(`${BASE_URL}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.status === 401 || response.status === 403) {
+        // Rechazo definitivo: el refresh token ya no sirve.
+        await Storage.removeTokens();
+        notifySessionRejected();
+        throw new ApiError(401, "La sesión ya no es válida. Inicia sesión de nuevo.");
       }
 
-      const result = await request<{ accessToken: string; refreshToken: string }>(
-        "POST",
-        "/api/auth/refresh",
-        { body: { refreshToken }, retryCount: 0 }
-      );
+      if (!response.ok) {
+        // Otro fallo del servidor (429, 5xx…): conservar tokens, no rechazar sesión.
+        const errorData = await response.json().catch(() => ({}));
+        throw new ApiError(
+          response.status,
+          errorData.detail || errorData.message || `Error ${response.status}`,
+          errorData.type,
+          response.headers.get("Retry-After") ?? undefined
+        );
+      }
 
-      await Storage.setTokens(result.accessToken, result.refreshToken);
-      refreshPromise = null;
+      const tokens = (await response.json()) as {
+        accessToken: string;
+        refreshToken: string;
+      };
+
+      await Storage.setTokens(tokens.accessToken, tokens.refreshToken);
+      return tokens.accessToken;
     } catch (err) {
-      refreshPromise = null;
+      clearTimeout(timeoutId);
+      if (err instanceof ApiError || err instanceof NetworkError) {
+        throw err;
+      }
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new NetworkError("Tiempo de espera agotado al renovar la sesión");
+      }
+      if (err instanceof TypeError && err.message.includes("fetch")) {
+        // Fallo de red: conservar tokens para poder reintentar más tarde.
+        throw new NetworkError("Sin conexión al renovar la sesión");
+      }
+      throw err instanceof Error ? err : new NetworkError("Error al renovar la sesión");
     } finally {
-      isRefreshing = false;
       refreshPromise = null;
     }
   })();
@@ -150,13 +228,13 @@ async function refreshAuth(): Promise<void> {
   return refreshPromise;
 }
 
-export { refreshAuth };
+export { refreshTokens as refreshAuth };
 
 export async function loginApi(email: string, password: string): Promise<{ accessToken: string; refreshToken: string }> {
   const result = await request<{ accessToken: string; refreshToken: string }>(
     "POST",
     "/api/auth/login",
-    { body: { email, password }, retryCount: 0 }
+    { body: { email, password } }
   );
 
   await Storage.setTokens(result.accessToken, result.refreshToken);
@@ -169,28 +247,22 @@ export async function registerApi(
   password: string,
   artistName: string
 ): Promise<{ didRegister: boolean; accessToken?: string; refreshToken?: string }> {
-  const registerResult: any = await request<any>(
-    "POST",
-    "/api/auth/register",
-    { body: { email, password, artistName }, retryCount: 0 }
-  );
+  await request<unknown>("POST", "/api/auth/register", {
+    body: { email, password, artistName },
+  });
 
   try {
     const loginResult = await loginApi(email, password);
     return { didRegister: true, accessToken: loginResult.accessToken, refreshToken: loginResult.refreshToken };
-  } catch (loginErr) {
+  } catch {
     return { didRegister: true, accessToken: undefined, refreshToken: undefined };
   }
 }
 
 export async function getMe(): Promise<MeResponse> {
-  const result = await request<MeResponse>("GET", "/api/auth/me", {
-    retryCount: 0,
-  });
-  return result;
+  return await request<MeResponse>("GET", "/api/auth/me");
 }
 
-// Tipado corregido para admitir ausencia de token
 export async function getAuthHeaders(): Promise<Record<string, string>> {
   const token = await Storage.getAccessToken();
 

@@ -1,291 +1,497 @@
 import * as React from "react";
-import { useEffect } from "react";
 import {
   View,
   Text,
-  TextInput,
   Button,
-  Alert,
   ActivityIndicator,
   RefreshControl,
-  TouchableOpacity,
   ScrollView,
   StyleSheet,
-  Linking,
+  Share,
+  Platform,
 } from "react-native";
-import QRCode from "react-native-qrcode-svg";
-import { Ionicons } from "@expo/vector-icons";
-import { useAuth } from "@/auth/provider";
-import { useRouter } from "expo-router";
-import { request } from "@/api/client";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { request, ApiError, NetworkError } from "@/api/client";
 import { RoomResponse } from "@/api/dto";
-import { getAuthHeaders } from "@/api/client";
+import { StatusBadge } from "@/components/StatusBadge";
+import { formatRoomSchedule } from "@/utils/dateFormat";
+import { Ionicons } from "@expo/vector-icons";
+import QRCode from "react-native-qrcode-svg";
+import { ScreenContainer } from "@/components/ScreenContainer";
+import { ScreenHeader } from "@/components/ScreenHeader";
+import { AppButton } from "@/components/AppButton";
+import { colors, radius, spacing, typography } from "@/theme/theme";
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidUuid(value: string): boolean {
+  return UUID_REGEX.test(value);
+}
+
 export default function RoomDetailScreen() {
   const router = useRouter();
-  const [id, setId] = React.useState<string | null>(null);
+  const params = useLocalSearchParams<{ id: string | string[] }>();
 
-  useEffect(() => {
-    // Try to get id from router params or URL
-    const params: any = router;
-    if (params?.params?.id) {
-      setId(params.params.id);
-    }
-    // Fallback: try to extract from URL
-    if (!id) {
-      Linking.getInitialURL().then((initialURL) => {
-        if (initialURL) {
-          const url = new URL(initialURL, "http://localhost");
-          const searchParams = new URLSearchParams(url.search);
-          const initialId = searchParams.get("id");
-          if (initialId) {
-            setId(initialId);
-          }
-        }
-      });
-    }
-  }, []);
+  const rawId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const id = rawId && isValidUuid(rawId) ? rawId : null;
 
-  const [state, setState] = React.useState<string | null>(null);
   const [room, setRoom] = React.useState<RoomResponse | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [confirmClose, setConfirmClose] = React.useState(false);
+  const conflictReloadRef = React.useRef(false);
 
-  const loadRoom = React.useCallback(
-    async () => {
-      if (!id) return;
-      try {
-        const headers = await getAuthHeaders();
-        const response = await fetch(
-          `${process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000"}/api/rooms/${id}`,
-          {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-              ...headers,
-            },
-          }
-        );
+  const loadRoom = React.useCallback(async () => {
+    if (!id) {
+      setIsLoading(false);
+      setError("Identificador de sala inválido.");
+      return;
+    }
 
-        if (response.status === 409) {
-          const errorData = await response.json().catch(() => ({}));
-          setError(errorData.detail || "Conflicto de estado. Recargando...");
-          setTimeout(() => loadRoom(), 1500);
-          return;
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const data = await request<RoomResponse>("GET", `/api/rooms/${id}`);
+      setRoom(data);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 404) {
+          setError("Sala no encontrada, ajena o caducada.");
+        } else if (err.status === 401 || err.status === 403) {
+          setError("Tu sesión no tiene permiso para ver esta sala.");
+        } else {
+          setError(err.message || "No se pudo cargar la sala.");
         }
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          setError(errorData.detail || "No se pudo cargar la sala");
-          return;
-        }
-
-        const data = await response.json();
-        setRoom(data);
-        setState(data.estado);
-      } catch (err: any) {
-        setError(err.message || "Error de red");
-      } finally {
-        setIsLoading(false);
+      } else if (err instanceof NetworkError) {
+        setError("Sin conexión con el servidor. Revisa tu red.");
+      } else {
+        setError("Error inesperado al cargar la sala.");
       }
-    },
-    [id]
-  );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [id]);
 
   React.useEffect(() => {
     loadRoom();
   }, [loadRoom]);
 
   const handleStateChange = async (newState: string) => {
-    if (!id || isSaving) return;
+    if (!id || isSaving || !room) return;
+
     setIsSaving(true);
     setError(null);
+
     try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000"}/api/rooms/${id}/state`,
+      const updated = await request<RoomResponse>(
+        "PATCH",
+        `/api/rooms/${id}/state`,
         {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            ...headers,
-          },
-          body: JSON.stringify({ estado: newState }),
+          body: { state: newState, version: room.version },
         }
       );
-
-      if (response.status === 409) {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Conflicto de estado");
-        setTimeout(() => loadRoom(), 1500);
-        setIsSaving(false);
-        return;
-      }
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Error al cambiar estado");
-        setIsSaving(false);
-        return;
-      }
-
-      const data = await response.json();
-      setState(newState);
-      setIsSaving(false);
-    } catch (err: any) {
-      if (err instanceof Error && err.message.includes("Network error")) {
-        Alert.alert("Error de red", "No se puede conectar con el servidor");
+      setRoom(updated);
+      setConfirmClose(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setError(
+          err.message ||
+            "La sala cambió en el servidor. Recargando los datos actuales…"
+        );
+        if (!conflictReloadRef.current) {
+          conflictReloadRef.current = true;
+          await loadRoom();
+          conflictReloadRef.current = false;
+        }
+      } else if (err instanceof ApiError && err.status === 404) {
+        setError("La sala ya no existe o fue eliminada.");
+      } else if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setError("Tu sesión no tiene permiso para modificar esta sala.");
+      } else if (err instanceof NetworkError) {
+        setError("Sin conexión con el servidor. Revisa tu red.");
       } else {
-        Alert.alert("Error", "Error al cambiar el estado de la sala");
+        setError(
+          err instanceof Error ? err.message : "Error al cambiar el estado."
+        );
       }
+    } finally {
       setIsSaving(false);
     }
   };
 
-  const handleClose = async () => {
-    const confirmed = await Alert.alert(
-      "Confirmar cierre",
-      "¿Estás seguro de que quieres cerrar la sala? Esto desconectará a los participantes.",
-      [
-        { text: "Cancelar", style: "cancel" },
-        {
-          text: "Cerrar",
-          style: "destructive",
-          onPress: async () => {
-            await handleStateChange("cerrada");
-          },
-        },
-      ]
-    );
+  const handleClose = () => {
+    setConfirmClose(true);
   };
 
-  const handleShareQR = async () => {
-    if (!room?.inviteUrl) {
-      Alert.alert("Error", "No hay URL de invitación disponible");
-      return;
-    }
+  const handleShare = async () => {
+    if (!room) return;
+
+    const message = `Únete a la sala "${room.nombre}" con el código ${room.codigo}: ${room.inviteUrl}`;
 
     try {
-      await Linking.openURL(room.inviteUrl);
-    } catch (err) {
-      Alert.alert("Error", "No se pudo compartir la QR");
+      await Share.share(
+        Platform.OS === "web"
+          ? { message }
+          : { message, url: room.inviteUrl }
+      );
+    } catch {
+      setError("No se pudo abrir el diálogo de compartir.");
     }
   };
 
-  if (!room) {
-    return isLoading ? (
-      <ActivityIndicator size="large" />
-    ) : (
-      <Text>Sala no encontrada</Text>
+  
+
+  // --- Early returns ---
+  if (!id) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>Identificador de sala inválido.</Text>
+        <AppButton title="Volver" variant="secondary" onPress={() => router.back()} />
+      </View>
     );
   }
 
-  return (
-    <ScrollView
-      refreshControl={
-        <RefreshControl
-          refreshing={isLoading}
-          onRefresh={() => loadRoom()}
-          tintColor="#8a2be2"
-        />
-      }
-      style={{ flexGrow: 1 }}
-    >
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>{room.nombre}</Text>
-          <Text style={styles.code}>Código: {room.codigo}</Text>
+  if (isLoading && !room) {
+    return (
+      <ScreenContainer>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
+      </ScreenContainer>
+    );
+  }
 
-        <View style={styles.info}>
-          <Text style={styles.label}>Estado:</Text>
-          <Text style={styles.value}>{state || "cargando..."}</Text>
+  if (error && !room) {
+    return (
+      <ScreenContainer>
+        <View style={styles.stateBox}>
+          <Ionicons name="cloud-offline-outline" size={40} color={colors.danger} />
+          <Text style={styles.errorText}>{error}</Text>
+          <AppButton title="Reintentar" variant="secondary" onPress={loadRoom} />
+          <AppButton title="Volver" variant="secondary" onPress={() => router.back()} />
         </View>
+      </ScreenContainer>
+    );
+  }
 
-        {state === "abierta" && (
-          <View style={styles.actions}>
-            <Button title="Pausar" onPress={() => handleStateChange("pausada") } />
-            <Button title="Cerrar" onPress={handleClose} color="red" />
-          </View>
-        )}
-
-        {state === "pausada" && (
-          <View style={styles.actions}>
-            <Button title="Reabrir" onPress={() => handleStateChange("abierta") } />
-            <Button title="Cerrar" onPress={handleClose} color="red" />
-          </View>
-        )}
-
-        {state === "cerrada" && (
-          <View style={styles.actions}>
-            <Button title="Reactivar" onPress={() => handleStateChange("abierta")} />
-          </View>
-        )}
-
-        <View style={styles.qrSection}>
-          <Text style={styles.qrTitle}>Código QR</Text>
-          <QRCode
-            value={room.inviteUrl}
-            size={200}
-            color="#8a2be2"
-          />
-          <Button title="Compartir QR" onPress={handleShareQR} />
+  if (!room) {
+    return (
+      <ScreenContainer>
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>La sala no está disponible o ha sido eliminada.</Text>
+          <AppButton title="Volver" variant="secondary" onPress={() => router.back()} />
         </View>
+      </ScreenContainer>
+    );
+  }
+
+  // Room is definitely defined after the early returns above
+  const roomSafe = room;
+  const canModify = !roomSafe.hasEnded && !isSaving;
+
+  const schedule = formatRoomSchedule(roomSafe.startsAt, roomSafe.endsAt, roomSafe.timezone);
+
+return (
+    <ScreenContainer>
+      <ScreenHeader
+        showBack={true}
+        onBack={() => router.back()}
+      />
+
+      {/* Nombre complete in its own row */}
+      <View style={styles.nombreRow}>
+        <Text style={styles.nombreText}>{roomSafe.nombre}</Text>
       </View>
-    </ScrollView>
+
+      {/* Etiqueta de estado debajo */}
+      <View style={styles.estadoRow}>
+        <StatusBadge estado={roomSafe.estado} hasEnded={roomSafe.hasEnded} />
+      </View>
+
+      {/* Código de acceso */}
+      <View style={styles.codigoBlock}>
+        <Text style={styles.codigoLabel}>Código de acceso</Text>
+        <Text style={styles.codigoValue}>{roomSafe.codigo}</Text>
+      </View>
+
+      {/* Fecha, horario y zona */}
+      {schedule ? (
+        <View style={styles.scheduleSection}>
+          <View style={styles.schedule}>
+            <View style={styles.scheduleRow}>
+              <Ionicons name="calendar-outline" size={15} color={colors.textSecondary} />
+              <Text style={styles.scheduleText}>{schedule.primary}</Text>
+            </View>
+            {schedule.secondary ? (
+              <View style={styles.scheduleRow}>
+                <Ionicons name="calendar-outline" size={15} color={colors.textSecondary} />
+                <Text style={styles.scheduleText}>{schedule.secondary}</Text>
+              </View>
+            ) : null}
+            {schedule.timeZone && (
+              <Text style={styles.timeZone}>Zona horaria: {schedule.timeZone}</Text>
+            )}
+          </View>
+        </View>
+      ) : null}
+
+      {/* Acciones de estado */}
+      {!confirmClose && (
+        <View style={styles.actions}>
+          {roomSafe.estado === "abierta" && (
+            <>
+              <AppButton
+                title={isSaving ? "Guardando…" : "Pausar"}
+                onPress={() => handleStateChange("pausada")}
+                disabled={!canModify}
+                variant="secondary"
+              />
+              <AppButton
+                title="Cerrar"
+                onPress={handleClose}
+                variant="danger"
+                disabled={!canModify}
+              />
+            </>
+          )}
+
+          {roomSafe.estado === "pausada" && (
+            <>
+              <AppButton
+                title={isSaving ? "Guardando…" : "Reabrir"}
+                onPress={() => handleStateChange("abierta")}
+                disabled={!canModify}
+                variant="secondary"
+              />
+              <AppButton
+                title="Cerrar"
+                onPress={handleClose}
+                variant="danger"
+                disabled={!canModify}
+              />
+            </>
+          )}
+
+          {roomSafe.estado === "cerrada" && (
+            <AppButton
+              title={isSaving ? "Guardando…" : "Reactivar"}
+              onPress={() => handleStateChange("abierta")}
+              disabled={!canModify}
+            />
+          )}
+        </View>
+      )}
+
+      {confirmClose && (
+        <View style={styles.confirmBox}>
+          <Text style={styles.confirmText}>
+            ¿Seguro que quieres cerrar esta sala? Los invitados ya no podrán enviar peticiones.
+          </Text>
+          <View style={styles.confirmActions}>
+            <AppButton
+              title="Confirmar cierre"
+              onPress={() => handleStateChange("cerrada")}
+              variant="danger"
+              disabled={isSaving}
+            />
+            <AppButton
+              title="Cancelar"
+              onPress={() => setConfirmClose(false)}
+              disabled={isSaving}
+            />
+          </View>
+        </View>
+      )}
+
+      {/* Compartir */}
+      <View style={styles.shareSection}>
+        <View style={{ marginBottom: spacing.xl, alignItems: "center" }}>
+          <QRCode value={roomSafe.inviteUrl} size={150} color="#000000" backgroundColor="#ffffff" />
+        </View>
+        <AppButton title="Compartir enlace" onPress={handleShare} variant="secondary" style={{ marginBottom: spacing.lg }} />
+        <Text style={styles.webNote}>
+          Nota: la vista de invitados para web aún no está disponible.
+        </Text>
+      </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
-    padding: 20,
-    backgroundColor: "#f8f9fa",
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.xl,
   },
   header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
-    paddingBottom: 15,
+    justifyContent: "space-between",
+    marginBottom: spacing.lg,
+    paddingBottom: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: "#dee2e6",
+    borderBottomColor: colors.border,
   },
   title: {
-    fontSize: 22,
-    fontWeight: "bold",
+    ...typography.title,
+    color: colors.textPrimary,
   },
   code: {
-    fontSize: 14,
-    color: "#666",
+    ...typography.caption,
+    color: colors.textSecondary,
   },
   info: {
-    marginBottom: 20,
+    marginBottom: spacing.lg,
   },
-  label: {
+  schedule: {
+    marginBottom: spacing.lg,
+  },
+  scheduleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  scheduleText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    flexShrink: 1,
+  },
+  timeZone: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+  },
+  errorBanner: {
+    padding: 12,
+    backgroundColor: colors.danger,
+    borderRadius: radius.control,
+    marginBottom: spacing.lg,
+  },
+  errorBannerText: {
+    color: colors.textPrimary,
     fontSize: 14,
-    color: "#666",
-    marginBottom: 4,
   },
-  value: {
-    fontSize: 18,
-    marginTop: 2,
+  endedBanner: {
+    padding: 12,
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radius.control,
+    marginBottom: spacing.lg,
+  },
+  endedBannerText: {
+    color: colors.textSecondary,
+    fontSize: 14,
   },
   actions: {
     flexDirection: "row",
-    gap: 10,
-    marginBottom: 15,
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+    flexWrap: "wrap",
+  },
+  confirmBox: {
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.control,
+    marginBottom: spacing.lg,
+  },
+  confirmText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
+  confirmActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    flexWrap: "wrap",
   },
   qrSection: {
-    marginTop: 20,
-    padding: 15,
-    backgroundColor: "#fff",
-    borderRadius: 8,
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    backgroundColor: colors.background,
+    borderRadius: radius.control,
   },
   qrTitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
     fontSize: 14,
     fontWeight: "bold",
-    marginBottom: 8,
+    marginBottom: spacing.sm,
     textAlign: "center",
+  },
+  inviteUrl: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginBottom: spacing.sm,
+  },
+  webNote: {
+    marginTop: spacing.sm,
+    fontSize: 12,
+    color: colors.textSecondary,
+    textAlign: "center",
+  },
+  errorText: {
+    fontSize: 16,
+    marginBottom: 12,
+    textAlign: "center",
+    color: colors.danger,
+  },
+  stateBox: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.xl,
+  },
+  nombreRow: {
+    flexDirection: "column",
+    alignItems: "flex-start",
+    marginBottom: spacing.md,
+  },
+  nombreText: {
+    ...typography.cardTitle,
+    color: colors.textPrimary,
+    fontWeight: "600",
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  estadoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  codigoBlock: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radius.control,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  codigoLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  codigoValue: {
+    ...typography.caption,
+    color: colors.textPrimary,
+  },
+  scheduleSection: {
+    marginBottom: spacing.lg,
+  },
+  shareSection: {
+    flexDirection: "column",
+    alignItems: "center",
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    backgroundColor: colors.background,
+    borderRadius: radius.control,
   },
 });

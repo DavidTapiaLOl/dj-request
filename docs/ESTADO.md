@@ -1,4 +1,38 @@
-﻿# DJ Requests — Estado de la tarea 04
+﻿# DJ Requests — Estado de la tarea 05 (Frontend: Sesión + Auth UI)
+
+## Resumen
+Corrección de restauración de sesión (bug 401 en `initialRestore`), centrado y unificación visual de Login/Registro con Design System, contenedor compartido `AuthScreenContainer`, validación de contraseña en registro.
+
+## Causa raíz del 401 en initialRestore
+`initialRestore` solo verificaba `storage.getAccessToken()`. Si no había access token pero sí un refresh token válido, marcaba `unauthenticated` inmediatamente sin intentar la renovación. Esto ocurría cuando el access token expiraba y solo quedaba el refresh token en almacenamiento.
+
+## Archivos creados/modificados
+- `mobile/src/components/AuthScreenContainer.tsx` — **nuevo**: contenedor full-screen fondo `#0B0D12`, `ScrollView` centrado vertical/horizontal, maxWidth 400, padding horizontal 24, `keyboardShouldPersistTaps`, safe area.
+- `mobile/src/auth/provider.tsx` — `initialRestore`/`restoreSession`: si no hay access token pero sí refresh token → `refreshAuth()` antes de `getMe()`. `restoreError` tipado (`session_expired` | `network` | `generic`). Manejo diferenciado: 401/403 en refresh → `session_expired` (borra tokens, banner en login); `NetworkError` → `network` (no borra tokens, vista retry); otro → `generic` (login sin banner).
+- `mobile/src/components/AppTextField.tsx` — tipos corregidos (`KeyboardTypeOptions`, `autoComplete`, `textContentType`) para pasar `tsc`.
+- `mobile/app/(auth)/login.tsx` — usa `AuthScreenContainer`, banner `session_expired` ("Tu sesión caducó. Inicia sesión de nuevo."), placeholders `textSecondary`, enlace con `textPrimary`/`primary`, botón loading.
+- `mobile/app/(auth)/register.tsx` — usa `AuthScreenContainer`, validación cliente `password.length >= 12` (error tras blur/submit), `helpText="Mínimo 12 caracteres"`, placeholders `textSecondary`, errores inline (eliminado `Alert.alert`), botón loading, enlace consistente.
+- `mobile/app/(auth)/_layout.tsx` — `network` → vista retry con `AppButton`; `session_expired`/`generic` → Stack login (banner en login.tsx).
+- `mobile/app/(app)/_layout.tsx` — mismo patrón: `network` retry con tokens del tema, `session_expired` redirige a login.
+
+## Comandos ejecutados
+```cmd
+npx tsc --noEmit
+npx expo export --platform web
+```
+
+## Resultados
+- **TypeScript**: 0 errores (corregido error preexistente en `AppTextField.tsx`).
+- **Export Web**: exitoso, bundle 2.6 MB, 27 archivos exportados a `dist/`.
+- **Verificación manual pendiente**: login/registro centrados en pantalla alta/baja, teclado abierto, restauración con sesión válida, renovación con solo refresh token, banner sesión caducada, logout, error de red con retry. No ejecutado en navegador en esta sesión.
+
+## Pendientes
+- Verificación visual en navegador/dispositivo de todos los flujos de autenticación.
+- Aplicar migración `SalaVersionConcurrencyToken` a `dj_requests` (tarea 03, decisión del usuario).
+
+---
+
+# DJ Requests — Estado de la tarea 04
 
 ## Resumen
 - Tarea 01: estructura del backend, modelo de datos, migración inicial y SQL de revisión.

@@ -1,16 +1,11 @@
 import * as React from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  Button,
-  Alert,
-  ActivityIndicator,
-  StyleSheet,
-  TouchableOpacity,
-} from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/provider";
+import { AppButton } from "@/components/AppButton";
+import { AppTextField } from "@/components/AppTextField";
+import { AuthScreenContainer } from "@/components/AuthScreenContainer";
+import { colors, spacing } from "@/theme/theme";
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -26,6 +21,17 @@ export default function RegisterScreen() {
   const [emailTouched, setEmailTouched] = React.useState(false);
   const [passwordTouched, setPasswordTouched] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [errorRed, setErrorRed] = React.useState<string | null>(null);
+
+  const validatePassword = (value: string): string | null => {
+    if (!value.trim()) {
+      return "Contraseña obligatoria";
+    }
+    if (value.length < 12) {
+      return "La contraseña debe tener al menos 12 caracteres";
+    }
+    return null;
+  };
 
   const onSubmit = async () => {
     let valid = true;
@@ -46,8 +52,9 @@ export default function RegisterScreen() {
       setEmailError(null);
     }
 
-    if (!password.trim()) {
-      setPasswordError("Contraseña obligatoria");
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setPasswordError(pwdError);
       setPasswordTouched(true);
       valid = false;
     } else {
@@ -59,13 +66,16 @@ export default function RegisterScreen() {
     try {
       setIsSubmitting(true);
       await register(email, password, artistName);
-      Alert.alert("Éxito", "Cuenta creada. Ahora puedes iniciar sesión.");
       router.replace("/(app)");
     } catch (err: any) {
       if (err instanceof Error && err.message.includes("Network error")) {
-        Alert.alert("Error de red", "No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
+        setErrorRed("No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
+      } else if (err.status === 409) {
+        setErrorRed("El correo ya está registrado");
+      } else if (err.status === 400) {
+        setErrorRed(err.message || "Datos inválidos. Revisa los campos.");
       } else {
-        Alert.alert("Error", "No se pudo crear la cuenta. Verifica los datos.");
+        setErrorRed(err.message || "No se pudo crear la cuenta. Intenta de nuevo.");
       }
     } finally {
       setIsSubmitting(false);
@@ -88,131 +98,126 @@ export default function RegisterScreen() {
 
   const onPasswordBlur = () => {
     setPasswordTouched(true);
-    if (!password.trim()) {
-      setPasswordError("Contraseña obligatoria");
-    }
+    setPasswordError(validatePassword(password));
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 20,
-        backgroundColor: "#f0e6ff",
-      }}
-    >
-      <Text style={{ fontSize: 24, fontWeight: "bold", marginBottom: 20 }}>
-        Registro
-      </Text>
+    <AuthScreenContainer>
+      <AppTextField
+        label="Nombre artístico"
+        value={artistName}
+        onChangeText={(text) => {
+          setArtistName(text);
+          if (nameError) setNameError(null);
+        }}
+        onBlur={onNameBlur}
+        placeholder="Tu nombre artístico"
+        placeholderTextColor={colors.textSecondary}
+        hasError={nameTouched && !!nameError}
+      />
+      {nameTouched && nameError && (
+        <Text style={styles.errorText}>{nameError}</Text>
+      )}
 
-      <View style={{ width: "100%", maxWidth: 350 }}>
-        {/* Artist Name */}
-        <TextInput
-          placeholder="Nombre artístico"
-          value={artistName}
-          onChangeText={(text) => {
-            setArtistName(text);
-            if (nameError) setNameError(null);
-          }}
-          onBlur={onNameBlur}
-          style={{
-            width: "100%",
-            height: 50,
-            borderColor: nameTouched && artistName === "" ? "#ff0000" : "#c0c0c0",
-            borderWidth: 1,
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            marginBottom: 12,
-            fontSize: 16,
-            backgroundColor: "#fff",
-          }}
-        />
-        {nameTouched && nameError && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{nameError}</Text>
-        )}
+      <AppTextField
+        label="Correo electrónico"
+        value={email}
+        onChangeText={(text) => {
+          setEmail(text);
+          if (emailError) setEmailError(null);
+        }}
+        onBlur={onEmailBlur}
+        autoComplete="email"
+        keyboardType="email-address"
+        placeholder="tu@correo.com"
+        placeholderTextColor={colors.textSecondary}
+        hasError={emailTouched && !!emailError}
+      />
+      {emailTouched && emailError && (
+        <Text style={styles.errorText}>{emailError}</Text>
+      )}
 
-        {/* Email */}
-        <TextInput
-          placeholder="Correo electrónico"
-          value={email}
-          onChangeText={(text) => {
-            setEmail(text);
-            if (emailError) setEmailError(null);
-          }}
-          onBlur={onEmailBlur}
-          style={{
-            width: "100%",
-            height: 50,
-            borderColor: emailTouched && email === "" ? "#ff0000" : "#c0c0c0",
-            borderWidth: 1,
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            marginBottom: 12,
-            fontSize: 16,
-            backgroundColor: "#fff",
-          }}
-        />
-        {emailTouched && emailError && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>Correo obligatorio</Text>
-        )}
+      <AppTextField
+        label="Contraseña"
+        value={password}
+        onChangeText={(text) => {
+          setPassword(text);
+          if (passwordError) setPasswordError(null);
+        }}
+        onBlur={onPasswordBlur}
+        secureTextEntry={true}
+        autoComplete="new-password"
+        placeholder="Mínimo 12 caracteres"
+        placeholderTextColor={colors.textSecondary}
+        helpText="Mínimo 12 caracteres"
+        hasError={passwordTouched && !!passwordError}
+      />
+      {passwordTouched && passwordError && (
+        <Text style={styles.errorText}>{passwordError}</Text>
+      )}
 
-        {/* Password */}
-        <TextInput
-          placeholder="Contraseña"
-          secureTextEntry
-          value={password}
-          onChangeText={(text) => {
-            setPassword(text);
-            if (passwordError) setPasswordError(null);
-          }}
-          onBlur={onPasswordBlur}
-          style={{
-            width: "100%",
-            height: 50,
-            borderColor: passwordTouched && password === "" ? "#ff0000" : "#c0c0c0",
-            borderWidth: 1,
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            marginBottom: 20,
-            fontSize: 16,
-            backgroundColor: "#fff",
-          }}
-        />
-        {passwordTouched && passwordError && (
-          <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>Contraseña obligatoria</Text>
-        )}
-
-        {/* Buttons */}
-        <View style={{ width: "100%", flexDirection: "row", justifyContent: "space-between" }}>
-          <TouchableOpacity
-            disabled={isSubmitting}
-            style={{
-              width: "100%",
-              height: 48,
-              backgroundColor: "#8a2be2",
-              borderRadius: 8,
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-            onPress={onSubmit}
-          >
-            <Text style={{ color: "white", fontSize: 16 }}>Crear cuenta</Text>
-          </TouchableOpacity>
+      {errorRed && (
+        <View style={styles.errorRedBanner}>
+          <Text style={styles.errorRedText}>{errorRed}</Text>
         </View>
+      )}
 
-        <Text
-          style={{
-            marginTop: 20,
-            color: "#64748b",
-            fontSize: 14,
-          }}>
-            ¿Ya tienes cuenta? <Text onPress={() => router.push("/(auth)/login")}>Inicia sesión</Text>
+      <AppButton
+        title="Crear cuenta"
+        onPress={onSubmit}
+        variant="primary"
+        loading={isSubmitting}
+        disabled={isSubmitting}
+        style={styles.submitButton}
+      />
+
+      <View style={styles.linkContainer}>
+        <Text style={styles.linkText}>
+          ¿Ya tienes cuenta?{" "}
+          <Text style={styles.link} onPress={() => router.push("/(auth)/login")}>
+            Inicia sesión
           </Text>
+        </Text>
       </View>
-    </View>
+    </AuthScreenContainer>
   );
 }
 
-const styles = StyleSheet.create({});
+const styles = StyleSheet.create({
+  errorText: {
+    color: colors.danger,
+    fontSize: 12,
+    marginBottom: spacing.sm,
+  },
+  errorRedBanner: {
+    padding: spacing.md,
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.danger,
+    borderWidth: 1,
+    borderRadius: 12,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  errorRedText: {
+    color: colors.danger,
+    fontSize: 13,
+    textAlign: "center",
+  },
+  submitButton: {
+    width: "100%",
+    marginTop: spacing.md,
+  },
+  linkContainer: {
+    marginTop: spacing.xl,
+    alignItems: "center",
+  },
+  linkText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+  },
+  link: {
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+});

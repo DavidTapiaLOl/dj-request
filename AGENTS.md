@@ -1,7 +1,7 @@
 # DJ Requests — reglas para OpenCode
 
 ## Antes de actuar
-Lee `docs/REQUISITOS.md` y `docs/ARQUITECTURA.md`. Para cambios de datos lee también `docs/BASE_DE_DATOS.md`. Estos archivos no se cargan solos: ábrelos. Inspecciona el repositorio y su estado Git antes de modificarlo. Trabaja solo en la tarea solicitada y conserva los cambios del usuario.
+Lee `docs/REQUISITOS.md` y `docs/ARQUITECTURA.md`. Para cambios de datos lee también `docs/BASE_DE_DATOS.md`. Si la tarea implica crear o modificar interfaces en `mobile/`, `web/` o `desktop/`, lee también `docs/DESIGN_SYSTEM.md`; no es necesario para tareas exclusivamente de backend o datos. Estos archivos no se cargan solos: ábrelos. Inspecciona el repositorio y su estado Git antes de modificarlo. Trabaja solo en la tarea solicitada y conserva los cambios del usuario.
 
 ## Contexto
 Un desarrollador trabaja en Windows, con OpenCode en terminal. El proyecto está en `C:\Users\juand\dj-requests`. Tiene acceso a Android, iPhone y Mac. Explica comandos para la terminal indicada (CMD por defecto); no mezcles sintaxis de Bash o PowerShell. Responde y documenta en español; usa identificadores de C# y TypeScript en inglés, tablas y columnas según el diseño acordado.
@@ -32,3 +32,6 @@ DTOs explícitos; nunca devolver entidades de EF directamente. Validar enlaces H
 Expón un plan breve y ejecuta el alcance autorizado. Solo pregunta si una ambigüedad cambia el producto o implica riesgo real; resuelve convenciones normales con estos documentos.
 Haz pruebas de restricciones, aislamiento de salas, privacidad, caducidad y concurrencia cuando correspondan. No sustituir PostgreSQL por EF InMemory para verificar su esquema.
 Reporta archivos modificados, comandos ejecutados, resultados reales, pendientes y siguiente paso. Distingue código generado de código compilado, migración generada de aplicada y pruebas ejecutadas de propuestas. Si falla una herramienta, conserva el error y no inventes un resultado exitoso.
+
+## Diseño e interfaces
+Antes de crear o modificar interfaces en `mobile/`, `web/` o `desktop/`, lee `docs/DESIGN_SYSTEM.md` y revisa los componentes existentes. Aplica su identidad visual y criterios de accesibilidad, adaptados a la plataforma. No cambies lógica funcional durante tareas visuales. Si una instrucción explícita del usuario cambia el diseño, aplícala y actualiza la documentación correspondiente para evitar contradicciones.

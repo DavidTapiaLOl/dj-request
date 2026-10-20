@@ -75,6 +75,7 @@ builder.Services.Configure<AuthRateLimitOptions>(
 builder.Services.AddOptions<FrontendUrlOptions>()
     .Bind(builder.Configuration.GetSection(FrontendUrlOptions.SectionName))
     .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<FrontendUrlOptions>, FrontendUrlOptionsValidator>();
 builder.Services.AddCors(options =>
     {
         options.AddPolicy("ExpoDevelopment", policy =>
@@ -199,12 +200,12 @@ builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();
 
+app.UseRouting();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseCors("ExpoDevelopment");
 }
-
-app.UseRouting();
 
 app.UseGuestSessionValidation();
 
