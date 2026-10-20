@@ -1,0 +1,244 @@
+@baseUrl = http://localhost:5025
+@accessToken = PEGAR_AQUÍ_ACCESS_TOKEN
+@roomCode = PEGAR_AQUÍ_CODIGO_SALA
+@roomId = PEGAR_AQUÍ_GUID_SALA
+@guestToken = PEGAR_AQUÍ_TOKEN_INVITADO
+@solicitudId = PEGAR_AQUÍ_GUID_SOLICITUD
+@version = 1
+@idempotencyKey = PEGAR_AQUÍ_GUID_IDEMPOTENCIA
+
+### ============================================================
+### DEMO: Solicitudes de canciones (song-requests-demo)
+### Flujo completo: registro DJ -> sala -> invitado -> solicitud -> transiciones
+### ============================================================
+
+### 1. Registrar DJ (si aún no tiene cuenta)
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "dj.demo@example.com",
+  "password": "frase-segura-demo-123",
+  "artistName": "DJ Demo"
+}
+
+### 2. Login del DJ (copiar accessToken de la respuesta)
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "dj.demo@example.com",
+  "password": "frase-segura-demo-123"
+}
+
+### 3. Crear sala (copiar roomId y code de la respuesta)
+POST {{baseUrl}}/api/rooms
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Sala Demo Solicitudes",
+  "startsAt": "2026-10-19T20:00:00+00:00",
+  "endsAt": "2026-10-20T00:00:00+00:00",
+  "maxSongs": null
+}
+
+### 4. Invitado: crear sesión con el código (copiar guestToken)
+POST {{baseUrl}}/api/guest-sessions
+Content-Type: application/json
+
+{
+  "code": "{{roomCode}}"
+}
+
+### 5. Invitado: enviar solicitud válida (esperado 201)
+###    Guardar el idempotencyKey como GUID propio; el cliente lo genera por intento lógico.
+POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
+X-Guest-Token: {{guestToken}}
+Content-Type: application/json
+
+{
+  "nombre": "Bailando",
+  "artista": "Enrique Iglesias",
+  "generoId": 3,
+  "enlace": "https://example.com/bailando",
+  "idempotencyKey": "{{idempotencyKey}}"
+}
+
+### 6. Invitado: reintentar con el mismo idempotencyKey y payload (esperado 200, misma solicitud)
+POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
+X-Guest-Token: {{guestToken}}
+Content-Type: application/json
+
+{
+  "nombre": "Bailando",
+  "artista": "Enrique Iglesias",
+  "generoId": 3,
+  "enlace": "https://example.com/bailando",
+  "idempotencyKey": "{{idempotencyKey}}"
+}
+
+### 7. Invitado: reintentar con mismo idempotencyKey pero payload distinto (esperado 409)
+POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
+X-Guest-Token: {{guestToken}}
+Content-Type: application/json
+
+{
+  "nombre": "Canción Diferente",
+  "artista": null,
+  "generoId": null,
+  "enlace": null,
+  "idempotencyKey": "{{idempotencyKey}}"
+}
+
+### 8. Invitado: solicitud sin nombre (esperado 400)
+POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
+X-Guest-Token: {{guestToken}}
+Content-Type: application/json
+
+{
+  "nombre": "",
+  "artista": null,
+  "generoId": null,
+  "enlace": null,
+  "idempotencyKey": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+}
+
+### 9. Invitado: enlace inválido (esperado 400)
+POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
+X-Guest-Token: {{guestToken}}
+Content-Type: application/json
+
+{
+  "nombre": "Test Enlace",
+  "artista": null,
+  "generoId": null,
+  "enlace": "no-es-una-url",
+  "idempotencyKey": "a8098c1a-f86e-11da-bd1a-00112444beef"
+}
+
+### 10. Invitado: género inexistente (esperado 400)
+POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
+X-Guest-Token: {{guestToken}}
+Content-Type: application/json
+
+{
+  "nombre": "Test Género",
+  "artista": null,
+  "generoId": 9999,
+  "enlace": null,
+  "idempotencyKey": "b5514fb2-4f25-4c3b-9c5f-1e2d3c4b5a69"
+}
+
+### 11. Invitado: envío inmediato tras otro (esperado 429 por intervalo de 30s)
+###    Ejecutar justo después del paso 5 sin esperar.
+POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
+X-Guest-Token: {{guestToken}}
+Content-Type: application/json
+
+{
+  "nombre": "Segundo Envío",
+  "artista": null,
+  "generoId": null,
+  "enlace": null,
+  "idempotencyKey": "c6617b48-93a2-4d5e-8f70-112233445566"
+}
+
+### 12. Invitado: sin token (esperado 401)
+POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
+Content-Type: application/json
+
+{
+  "nombre": "Sin Token",
+  "artista": null,
+  "generoId": null,
+  "enlace": null,
+  "idempotencyKey": "d7728c59-a4b3-4e6f-9a81-223344556677"
+}
+
+### 13. Invitado: listar solo sus solicitudes
+GET {{baseUrl}}/api/guest/rooms/{{roomId}}/requests?page=1&pageSize=20
+X-Guest-Token: {{guestToken}}
+
+### 14. DJ: listar solicitudes de su sala (paginado, con filtros opcionales)
+GET {{baseUrl}}/api/rooms/{{roomId}}/requests?page=1&pageSize=20&estado=pendiente
+Authorization: Bearer {{accessToken}}
+
+### 15. DJ: filtrar por estado aceptada
+GET {{baseUrl}}/api/rooms/{{roomId}}/requests?estado=aceptada
+Authorization: Bearer {{accessToken}}
+
+### 16. DJ: aceptar solicitud (esperado 200; version = versión actual de la solicitud)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/requests/{{solicitudId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "estado": "aceptada",
+  "version": {{version}}
+}
+
+### 17. DJ: marcar como reproducida (esperado 200; usar la versión devuelta en el paso 16)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/requests/{{solicitudId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "estado": "reproducida",
+  "version": 2
+}
+
+### 18. DJ: intentar cambiar desde estado terminal (esperado 400)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/requests/{{solicitudId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "estado": "aceptada",
+  "version": 3
+}
+
+### 19. DJ: rechazar otra solicitud (esperado 200)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/requests/{{solicitudId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "estado": "rechazada",
+  "version": {{version}}
+}
+
+### 20. DJ: versión incorrecta (esperado 400)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/requests/{{solicitudId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "estado": "aceptada",
+  "version": 999
+}
+
+### 21. DJ: estado inválido (esperado 400)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/requests/{{solicitudId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "estado": "inventado",
+  "version": {{version}}
+}
+
+### 22. DJ de otra cuenta: acceso a sala ajena (esperado 404)
+###    Usar el accessToken de un DJ distinto.
+GET {{baseUrl}}/api/rooms/{{roomId}}/requests
+Authorization: Bearer {{accessTokenOtroDj}}
+
+### 23. Invitado: pausar la sala como DJ y reintentar solicitud (esperado 409)
+PATCH {{baseUrl}}/api/rooms/{{roomId}}/state
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "state": "pausada",
+  "version": 1
+}

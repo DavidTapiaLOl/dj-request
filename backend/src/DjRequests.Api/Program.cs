@@ -8,6 +8,8 @@ using DjRequests.Api.Modules.Guests.Endpoints;
 using DjRequests.Api.Modules.Guests.Options;
 using DjRequests.Api.Modules.Guests.Services;
 using DjRequests.Api.Modules.Health;
+using DjRequests.Api.Modules.Requests.Endpoints;
+using DjRequests.Api.Modules.Requests.Services;
 using DjRequests.Api.Modules.Rooms.Options;
 using DjRequests.Api.Modules.Rooms.Services;
 using DjRequests.Api.Modules.Rooms.Endpoints;
@@ -183,6 +185,7 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IRoomCodeGenerator, RoomCodeGenerator>();
 builder.Services.AddSingleton<IGuestTokenGenerator, GuestTokenGenerator>();
 builder.Services.AddScoped<IGuestSessionService, GuestSessionService>();
+builder.Services.AddScoped<ISolicitudService, SolicitudService>();
 builder.Services.Configure<TimeZoneValidatorOptions>(
     config => config.DefaultTimezone = "America/Mexico_City");
 
@@ -260,6 +263,7 @@ app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapRoomEndpoints();
 app.MapGuestEndpoints();
+app.MapSolicitudEndpoints();
 
 app.Run();
 public partial class Program { }
