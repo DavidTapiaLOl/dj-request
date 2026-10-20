@@ -60,6 +60,42 @@ export type RoomResponse = {
 
 export type ListRoomsResponse = RoomResponse[];
 
+// --- Solicitudes (Song Requests) ---
+
+export type SolicitudResponse = {
+  id: string;
+  nombre: string;
+  artista: string | null;
+  generoId: number | null;
+  generoNombre: string | null;
+  enlace: string | null;
+  estado: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SolicitudPageResponse = {
+  items: SolicitudResponse[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  hasMore: boolean;
+};
+
+export type CreateSolicitudRequest = {
+  nombre: string;
+  artista?: string | null;
+  generoId?: number | null;
+  enlace?: string | null;
+  idempotencyKey: string;
+};
+
+export type UpdateSolicitudStateRequest = {
+  estado: string;
+  version: number;
+};
+
 // --- Esquemas Zod validación ---
 
 export const loginSchema = z.object({

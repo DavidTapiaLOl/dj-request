@@ -229,10 +229,7 @@ export default function CreateScreen() {
 
   return (
     <ScreenContainer>
-      <ScreenHeader
-        showBack={true}
-        onBack={() => router.back()}
-      />
+      <ScreenHeader showBack={true} />
 
       <View style={styles.formContainer}>
         <AppTextField

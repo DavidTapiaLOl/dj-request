@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { MeResponse } from "./dto";
+import { MeResponse, SolicitudPageResponse, SolicitudResponse } from "./dto";
 import * as SecureStore from "expo-secure-store";
 import * as Storage from "../auth/storage";
 
@@ -271,6 +271,36 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   }
 
   return { Authorization: `Bearer ${token}` };
+}
+
+// --- Solicitudes (Song Requests) ---
+
+export async function listSolicitudes(
+  roomId: string,
+  params?: { page?: number; pageSize?: number; estado?: string; generoId?: number }
+): Promise<SolicitudPageResponse> {
+  const queryParams = new URLSearchParams();
+  if (params?.page) queryParams.set("page", String(params.page));
+  if (params?.pageSize) queryParams.set("pageSize", String(params.pageSize));
+  if (params?.estado) queryParams.set("estado", params.estado);
+  if (params?.generoId) queryParams.set("generoId", String(params.generoId));
+
+  const qs = queryParams.toString();
+  const path = `/api/rooms/${roomId}/requests${qs ? `?${qs}` : ""}`;
+  return await request<SolicitudPageResponse>("GET", path);
+}
+
+export async function updateSolicitudState(
+  roomId: string,
+  solicitudId: string,
+  estado: string,
+  version: number
+): Promise<SolicitudResponse> {
+  return await request<SolicitudResponse>(
+    "PATCH",
+    `/api/rooms/${roomId}/requests/${solicitudId}`,
+    { body: { estado, version } }
+  );
 }
 
 export { BASE_URL };

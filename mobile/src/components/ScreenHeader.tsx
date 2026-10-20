@@ -1,11 +1,11 @@
 import * as React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { colors, spacing } from "../theme/theme";
 
 interface ScreenHeaderProps {
   showBack?: boolean;
-  onBack?: () => void;
   rightAction?: {
     title: string;
     onPress: () => void;
@@ -13,14 +13,24 @@ interface ScreenHeaderProps {
   };
 }
 
-export function ScreenHeader({ showBack = true, onBack, rightAction }: ScreenHeaderProps) {
+export function ScreenHeader({ showBack = true, rightAction }: ScreenHeaderProps) {
+  const router = useRouter();
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(app)");
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.backArea}>
-        {showBack && onBack && (
+        {showBack && (
           <TouchableOpacity
             style={styles.backButton}
-            onPress={onBack}
+            onPress={handleBack}
             accessibilityRole="button"
             accessibilityLabel="Volver"
           >
