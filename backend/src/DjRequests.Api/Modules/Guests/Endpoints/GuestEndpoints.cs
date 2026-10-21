@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using DjRequests.Api.Entities;
+using DjRequests.Api.Modules.Common;
 using DjRequests.Api.Modules.Guests.Dtos;
 using DjRequests.Api.Modules.Guests.Options;
 using DjRequests.Api.Modules.Guests.Services;
@@ -131,7 +132,7 @@ public static class GuestEndpoints
             {
                 ["Code"] = new[] { "Codigo de sala invalido. Debe tener 10 caracteres (A-H, J-N, P-Z, 2-9)." }
             });
-            return AddNoStore(problem);
+            return NoStoreResults.AddNoStore(problem);
         }
 
         var salaIdOnly = await context.Salas
@@ -147,7 +148,7 @@ public static class GuestEndpoints
                 statusCode: StatusCodes.Status404NotFound,
                 title: "Sala no encontrada",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
-            return AddNoStore(problem);
+            return NoStoreResults.AddNoStore(problem);
         }
 
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
@@ -167,7 +168,7 @@ public static class GuestEndpoints
                 statusCode: StatusCodes.Status404NotFound,
                 title: "Sala no encontrada",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
-            return AddNoStore(problem);
+            return NoStoreResults.AddNoStore(problem);
         }
 
         if (lockedSala.EndsAt <= now)
@@ -178,7 +179,7 @@ public static class GuestEndpoints
                 statusCode: StatusCodes.Status404NotFound,
                 title: "Sala finalizada",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
-            return AddNoStore(problem);
+            return NoStoreResults.AddNoStore(problem);
         }
 
         if (lockedSala.Estado != "abierta")
@@ -189,7 +190,7 @@ public static class GuestEndpoints
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Sala no disponible",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.10");
-            return AddNoStore(problem);
+            return NoStoreResults.AddNoStore(problem);
         }
 
         SesionInvitado? sesion = null;
@@ -229,11 +230,11 @@ public static class GuestEndpoints
         if (sesion is null || generatedToken is null)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return Results.Problem(
+            return NoStoreResults.AddNoStore(Results.Problem(
                 detail: "No se pudo generar un token unico tras varios intentos.",
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Token no disponible",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.10");
+                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.10"));
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -244,7 +245,7 @@ public static class GuestEndpoints
             Room: ToRoomMinimalDto(lockedSala, now)
         );
 
-        return Results.Created($"/api/guest/rooms/{lockedSala.Id}", response);
+        return NoStoreResults.AddNoStore(Results.Created($"/api/guest/rooms/{lockedSala.Id}", response));
     }
 
     #endregion
@@ -267,7 +268,7 @@ public static class GuestEndpoints
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
-            return AddNoStore(problem);
+            return NoStoreResults.AddNoStore(problem);
         }
 
         var token = tokenHeader.ToString();
@@ -280,7 +281,7 @@ public static class GuestEndpoints
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
                 type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
-            return AddNoStore(problem);
+            return NoStoreResults.AddNoStore(problem);
         }
 
         var tokenHash = ComputeTokenHash(tokenBytes);
@@ -296,7 +297,7 @@ public static class GuestEndpoints
                         statusCode: StatusCodes.Status401Unauthorized,
                         title: "No autorizado",
                         type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
-                    return problem;
+                    return NoStoreResults.AddNoStore(problem);
                 }
 
             case GuestSessionStatus.RoomNotFound:
@@ -306,7 +307,7 @@ public static class GuestEndpoints
                         statusCode: StatusCodes.Status404NotFound,
                         title: "Sala no encontrada",
                         type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
-                    return AddNoStore(problem);
+                    return NoStoreResults.AddNoStore(problem);
                 }
 
             default:
@@ -322,15 +323,10 @@ public static class GuestEndpoints
                     );
 
                     var ok = Results.Ok(response);
-                    return AddNoStore(ok);
+                    return NoStoreResults.AddNoStore(ok);
                 }
         }
     }
 
     #endregion
-
-    private static IResult AddNoStore(IResult result)
-    {
-        return result;
-    }
 }

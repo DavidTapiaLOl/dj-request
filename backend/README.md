@@ -357,9 +357,9 @@ No son editables vía API en esta tarea.
 
 Los endpoints de invitados están bajo `/api/guest`. **No requieren autenticación bearer**: el invitado se identifica con un token temporal en la cabecera `X-Guest-Token`. Los invitados no tienen cuenta ni contraseña.
 
-**Endpoints:** `POST /api/guest/sessions`, `GET /api/guest/rooms/{roomId}`.
+**Endpoints:** `POST /api/guest-sessions`, `GET /api/guest/rooms/{roomId}`.
 
-### POST /api/guest/sessions
+### POST /api/guest-sessions
 Crea una sesión temporal de invitado a partir del código de la sala.
 
 **Request:**

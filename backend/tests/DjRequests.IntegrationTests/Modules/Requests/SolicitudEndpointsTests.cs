@@ -458,21 +458,56 @@ public class SolicitudEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Guest_List_ReturnsOwnSolicitudes()
+    public async Task Guest_List_ReturnsAllSongsOfSameRoom_And404ForOtherRoom()
     {
         var (roomId, code) = await CreateRoomAndGetCodeAsync();
-        var token = await CreateGuestSessionAsync(Client, code);
+        var token1 = await CreateGuestSessionAsync(Client, code);
+        var token2 = await CreateGuestSessionAsync(Client, code);
 
-        // Crear 2 solicitudes
-        await Client.SendAsync(GuestPost(roomId, token, MakeSolicitud("Invitado A")));
+        // Dos invitados distintos de la misma sala envían una canción cada uno.
+        var r1 = await Client.SendAsync(GuestPost(roomId, token1, MakeSolicitud("Invitado A")));
+        Assert.Equal(HttpStatusCode.Created, r1.StatusCode);
         FakeTime.Advance(TimeSpan.FromSeconds(31));
-        await Client.SendAsync(GuestPost(roomId, token, MakeSolicitud("Invitado B")));
+        var r2 = await Client.SendAsync(GuestPost(roomId, token2, MakeSolicitud("Invitado B")));
+        Assert.Equal(HttpStatusCode.Created, r2.StatusCode);
 
-        var response = await Client.SendAsync(GuestGetList(roomId, token));
+        // Cualquier invitado de la sala ve todas las canciones de la sala.
+        var response = await Client.SendAsync(GuestGetList(roomId, token1));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var page = await response.Content.ReadFromJsonAsync<SolicitudPageResponse>();
         Assert.NotNull(page);
         Assert.Equal(2, page.TotalCount);
+        Assert.Contains(page.Items, s => s.Nombre == "Invitado A");
+        Assert.Contains(page.Items, s => s.Nombre == "Invitado B");
+
+        // El token de esta sala no puede consultar el contenido de otra sala.
+        var room2 = await CreateRoomAsync(Client, FakeTime.UtcNow, "Otra Sala");
+        var otherRoomResponse = await Client.SendAsync(GuestGetList(room2.Id, token1));
+        Assert.Equal(HttpStatusCode.NotFound, otherRoomResponse.StatusCode);
+        var body = await otherRoomResponse.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Invitado A", body);
+        Assert.DoesNotContain("Invitado B", body);
+    }
+
+    [Fact]
+    public async Task Guest_List_ExtremelyLargePage_Returns400()
+    {
+        var (roomId, code) = await CreateRoomAndGetCodeAsync();
+        var token = await CreateGuestSessionAsync(Client, code);
+
+        var response = await Client.SendAsync(GuestGetList(roomId, token, page: int.MaxValue, pageSize: 100));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DJ_List_ExtremelyLargePage_Returns400()
+    {
+        var (roomId, _) = await CreateRoomAndGetCodeAsync();
+
+        var response = await Client.SendAsync(DjGetList(roomId, page: int.MaxValue, pageSize: 100));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     #endregion
@@ -556,7 +591,7 @@ public class SolicitudEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DJ_Update_WrongVersion_Returns400()
+    public async Task DJ_Update_StaleVersion_Returns409()
     {
         var (roomId, code) = await CreateRoomAndGetCodeAsync();
         var token = await CreateGuestSessionAsync(Client, code);
@@ -565,6 +600,19 @@ public class SolicitudEndpointsTests : IAsyncLifetime
         var solicitud = await createResp.Content.ReadFromJsonAsync<SolicitudResponse>();
 
         var response = await Client.SendAsync(DjPatch(roomId, solicitud!.Id, new { estado = "aceptada", version = 999 }));
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DJ_Update_NonPositiveVersion_Returns400()
+    {
+        var (roomId, code) = await CreateRoomAndGetCodeAsync();
+        var token = await CreateGuestSessionAsync(Client, code);
+
+        var createResp = await Client.SendAsync(GuestPost(roomId, token, MakeSolicitud("Versión inválida")));
+        var solicitud = await createResp.Content.ReadFromJsonAsync<SolicitudResponse>();
+
+        var response = await Client.SendAsync(DjPatch(roomId, solicitud!.Id, new { estado = "aceptada", version = 0 }));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -641,11 +689,218 @@ public class SolicitudEndpointsTests : IAsyncLifetime
         // Segunda inmediata debe fallar (intervalo 30s por defecto)
         var r2 = await Client.SendAsync(GuestPost(roomId, token, MakeSolicitud("Segunda")));
         Assert.Equal(HttpStatusCode.TooManyRequests, r2.StatusCode);
+        Assert.True(r2.Headers.RetryAfter?.Delta > TimeSpan.Zero);
+        Assert.Equal("application/problem+json", r2.Content.Headers.ContentType?.MediaType);
 
         // Avanzar tiempo y reintentar
         FakeTime.Advance(TimeSpan.FromSeconds(31));
         var r3 = await Client.SendAsync(GuestPost(roomId, token, MakeSolicitud("Tercera")));
         Assert.Equal(HttpStatusCode.Created, r3.StatusCode);
+    }
+
+    #endregion
+
+    #region Revalidación post-bloqueo (concurrencia)
+
+    private sealed record SeededSession(string Token, string Hash, Guid Id);
+
+    private static async Task<SeededSession> SeedSessionAsync(
+        WebAppFactory factory,
+        Guid salaId,
+        DateTimeOffset createdAt,
+        DateTimeOffset expiresAt)
+    {
+        var (token, hash) = MakeToken();
+        var id = Guid.NewGuid();
+
+        await using var db = await factory.CreateDbContextAsync();
+        db.SesionesInvitado.Add(new SesionInvitado
+        {
+            Id = id,
+            SalaId = salaId,
+            TokenHash = hash,
+            CreatedAt = createdAt,
+            ExpiresAt = expiresAt,
+            RevokedAt = null,
+            UltimoEnvioAt = null
+        });
+        await db.SaveChangesAsync();
+
+        return new SeededSession(token, hash, id);
+    }
+
+    private static async Task<Guid> SeedSolicitudAsync(
+        WebAppFactory factory,
+        Guid salaId,
+        Guid sesionId,
+        string nombre,
+        DateTimeOffset now)
+    {
+        var id = Guid.NewGuid();
+
+        await using var db = await factory.CreateDbContextAsync();
+        db.Solicitudes.Add(new Solicitud
+        {
+            Id = id,
+            SalaId = salaId,
+            SesionId = sesionId,
+            Nombre = nombre,
+            Estado = "pendiente",
+            IdempotencyKey = Guid.NewGuid(),
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        await db.SaveChangesAsync();
+
+        return id;
+    }
+
+    [Fact]
+    public async Task Create_SalaFinalizadaMientrasEsperaBloqueo_Returns409()
+    {
+        await using var factory = new WebAppFactory(_postgres) { EnableRoomLockPause = true };
+        await factory.InitializeAsync();
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        var fakeTime = (FakeTimeProvider)factory.Services.GetRequiredService<TimeProvider>();
+
+        await RegisterAndLoginAsync(client, "lock-room-end@test.com");
+        var room = await CreateRoomAsync(client, fakeTime.UtcNow);
+        var session = await SeedSessionAsync(factory, room.Id, fakeTime.UtcNow, room.EndsAt);
+
+        var lockPause = factory.RoomLockPause!;
+        var now0 = fakeTime.UtcNow;
+
+        var postTask = client.SendAsync(GuestPost(room.Id, session.Token, MakeSolicitud()));
+
+        await lockPause.Paused.WaitAsync(TimeSpan.FromSeconds(10));
+        fakeTime.UtcNow = now0.AddHours(5);
+        lockPause.Resume();
+
+        var response = await postTask;
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_SalaPausadaMientrasEsperaBloqueo_Returns409()
+    {
+        await using var factory = new WebAppFactory(_postgres) { EnableRoomLockPause = true };
+        await factory.InitializeAsync();
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        var fakeTime = (FakeTimeProvider)factory.Services.GetRequiredService<TimeProvider>();
+
+        await RegisterAndLoginAsync(client, "lock-room-pause@test.com");
+        var room = await CreateRoomAsync(client, fakeTime.UtcNow);
+        var session = await SeedSessionAsync(factory, room.Id, fakeTime.UtcNow, room.EndsAt);
+
+        var lockPause = factory.RoomLockPause!;
+
+        var postTask = client.SendAsync(GuestPost(room.Id, session.Token, MakeSolicitud()));
+
+        await lockPause.Paused.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // El FOR UPDATE aún no se ejecutó: otro comando puede pausar la sala.
+        var current = await client.GetFromJsonAsync<RoomResponse>($"/api/rooms/{room.Id}");
+        var pauseResponse = await client.PatchAsJsonAsync($"/api/rooms/{room.Id}/state",
+            new { state = "pausada", version = current!.Version });
+        Assert.Equal(HttpStatusCode.OK, pauseResponse.StatusCode);
+
+        lockPause.Resume();
+
+        var response = await postTask;
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_SesionExpiradaMientrasEsperaBloqueoSesion_Returns401()
+    {
+        await using var factory = new WebAppFactory(_postgres) { EnableSesionLockPause = true };
+        await factory.InitializeAsync();
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        var fakeTime = (FakeTimeProvider)factory.Services.GetRequiredService<TimeProvider>();
+
+        await RegisterAndLoginAsync(client, "lock-session-exp@test.com");
+        var now0 = fakeTime.UtcNow;
+        var room = await CreateRoomAsync(client, now0);
+        var session = await SeedSessionAsync(factory, room.Id, now0, now0.AddSeconds(10));
+
+        var lockPause = factory.SesionLockPause!;
+
+        var postTask = client.SendAsync(GuestPost(room.Id, session.Token, MakeSolicitud()));
+
+        await lockPause.Paused.WaitAsync(TimeSpan.FromSeconds(10));
+        fakeTime.UtcNow = now0.AddSeconds(20);
+        lockPause.Resume();
+
+        var response = await postTask;
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_SesionRevocadaMientrasEsperaBloqueoSesion_Returns401()
+    {
+        await using var factory = new WebAppFactory(_postgres) { EnableSesionLockPause = true };
+        await factory.InitializeAsync();
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        var fakeTime = (FakeTimeProvider)factory.Services.GetRequiredService<TimeProvider>();
+
+        await RegisterAndLoginAsync(client, "lock-session-rev@test.com");
+        var room = await CreateRoomAsync(client, fakeTime.UtcNow);
+        var session = await SeedSessionAsync(factory, room.Id, fakeTime.UtcNow, room.EndsAt);
+
+        var lockPause = factory.SesionLockPause!;
+
+        var postTask = client.SendAsync(GuestPost(room.Id, session.Token, MakeSolicitud()));
+
+        await lockPause.Paused.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var sesion = await db.SesionesInvitado.SingleAsync(s => s.TokenHash == session.Hash);
+            sesion.RevokedAt = fakeTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        lockPause.Resume();
+
+        var response = await postTask;
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateState_SalaCaducadaMientrasEsperaBloqueo_Returns404()
+    {
+        await using var factory = new WebAppFactory(_postgres) { EnableRoomLockPause = true };
+        await factory.InitializeAsync();
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        var fakeTime = (FakeTimeProvider)factory.Services.GetRequiredService<TimeProvider>();
+
+        await RegisterAndLoginAsync(client, "lock-update-expired@test.com");
+        var now0 = fakeTime.UtcNow;
+        var room = await CreateRoomAsync(client, now0);
+        var session = await SeedSessionAsync(factory, room.Id, now0, room.EndsAt);
+        var solicitudId = await SeedSolicitudAsync(factory, room.Id, session.Id, "Caduca", now0);
+
+        var lockPause = factory.RoomLockPause!;
+
+        var patchTask = client.SendAsync(DjPatch(room.Id, solicitudId, new { estado = "aceptada", version = 1 }));
+
+        await lockPause.Paused.WaitAsync(TimeSpan.FromSeconds(10));
+        fakeTime.UtcNow = now0.AddDays(8);
+        lockPause.Resume();
+
+        var response = await patchTask;
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     #endregion

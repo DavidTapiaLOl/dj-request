@@ -1,4 +1,33 @@
-﻿# DJ Requests — Estado de la tarea 05 (Frontend: Sesión + Auth UI)
+﻿# DJ Requests — Estado de la tarea 06 (correcciones de solicitudes)
+
+## Resumen
+Corrección de los 7 hallazgos de la demo de solicitudes: listado de invitados por sala, separación de errores 400/409, 429 con `Retry-After`, revalidación temporal tras adquirir ambos bloqueos, paginación segura, `Cache-Control: no-store` en todas las respuestas de invitado y actualización de documentación.
+
+## Archivos creados/modificados
+- `backend/src/DjRequests.Api/Modules/Common/NoStoreResult.cs` — **nuevo**: wrapper `IResult` reutilizable que fija `Cache-Control: no-store` antes de ejecutar el resultado interno.
+- `backend/src/DjRequests.Api/Modules/Common/PaginationValidation.cs` — **nuevo**: validación compartida `page`/`pageSize` y cálculo de offset en `long` para evitar overflow de `int`.
+- `backend/src/DjRequests.Api/Modules/Requests/Services/SolicitudService.cs` — listado de invitados por `SalaId`; `now` se toma después de bloquear sala y sesión/solicitud; versión obsoleta → `VersionObsoleta`; conflicto de concurrencia → `Concurrencia`; paginación protegida.
+- `backend/src/DjRequests.Api/Modules/Requests/Endpoints/SolicitudEndpoints.cs` — 409 para `VersionObsoleta`/`Concurrencia`; `Retry-After` en 429 con `application/problem+json`; paginación → 400; `no-store` en endpoints de invitado.
+- `backend/src/DjRequests.Api/Modules/Guests/Endpoints/GuestEndpoints.cs` — `no-store` en creación de sesión (201 y errores) y en la consulta de sala (200, 401 y 404).
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/SesionInvitadoLockPauseInterceptor.cs` — **nuevo**: pausa determinista antes del `FOR UPDATE` de `sesiones_invitado`.
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/WebAppFactory.cs` — cableado de `EnableSesionLockPause`/`SesionLockPause`.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Requests/SolicitudEndpointsTests.cs` — 34 pruebas: aislamiento por sala, paginación fuera de rango, 400 vs 409, `Retry-After`, caducidad/revocación durante la espera de bloqueo.
+- `song-requests-demo.http`, `docs/DEMO_PRIMERA_ENTREGA.md`, `docs/ARQUITECTURA.md`, `backend/README.md` y `ESTADO.md` — documentación alineada (ruta `/api/guest-sessions`, listado por sala, 409, `Retry-After`).
+
+## Resultados reales
+- **Build API**: correcto, 0 errores (se compiló en salida temporal porque la API estaba en ejecución y bloqueaba `bin\Debug`).
+- **Pruebas**: `228/228` correctas con `dotnet vstest` sobre PostgreSQL 17 (Testcontainers), incluida `GetRoom_UnknownToken_Returns401`.
+- **TypeScript móvil**: `npx tsc --noEmit` sin errores.
+- **Migraciones**: ninguna generada ni aplicada; `dj_requests` no fue tocada.
+- **Git**: correcciones incluidas en la rama `feat/song-requests-demo`.
+
+## Comprobación manual
+- **Completada (21/10/2026)**: con la API reiniciada, el usuario confirmó en dispositivo el flujo de invitado (envío de una solicitud) y de DJ (recepción y cambio de estado).
+- Sin pendientes funcionales para esta tarea; quedan fuera de esta comprobación manual los casos ya cubiertos por pruebas automáticas (404 entre salas, 409 con refresco de lista y `Cache-Control: no-store`).
+
+---
+
+# DJ Requests — Estado de la tarea 05 (Frontend: Sesión + Auth UI)
 
 ## Resumen
 Corrección de restauración de sesión (bug 401 en `initialRestore`), centrado y unificación visual de Login/Registro con Design System, contenedor compartido `AuthScreenContainer`, validación de contraseña en registro.

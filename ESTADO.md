@@ -84,6 +84,23 @@
 6. Validar manejo de errores de red vs credenciales inválidas
 7. Validar refresco de sesión
 8. Validar conversión de zona horaria en dispositivo
+9. Confirmar la demo de solicitudes: invitado envía una canción y el DJ la ve, la acepta, la marca reproducida y la rechaza — **completado el 21/10/2026**
+
+---
+
+## Actualización — Demo de solicitudes de canciones (21/10/2026)
+
+| Aspecto | implementado | verificado automáticamente | pendiente de probar en dispositivo físico |
+|---|---|---|---|
+| Invitado ve todas las canciones de su sala | ✅ | ✅ | ❌ |
+| Token de otra sala responde 404 sin contenido | ✅ | ✅ | ❌ |
+| DJ lista y gestiona solicitudes con `version` | ✅ | ✅ | ✅ |
+| Versión obsoleta responde 409 y la app refresca la lista | ✅ | ✅ | ❌ |
+| Respuestas de invitado con `Cache-Control: no-store` | ✅ | ✅ | ❌ |
+
+- Verificado automáticamente: build del backend sin errores, 228/228 pruebas de integración en verde (PostgreSQL 17 con Testcontainers) y `npx tsc --noEmit` sin errores.
+- **Comprobado manualmente (21/10/2026)**: con la API reiniciada, el invitado envió una solicitud y el DJ la recibió y cambió de estado en dispositivo real.
+- Las filas restantes (404 entre salas, 409 con refresco automático y `no-store`) quedan cubiertas por pruebas automáticas y no se marcaron como probadas en dispositivo porque no se ejercitaron manualmente.
 
 ---
 

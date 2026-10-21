@@ -1,4 +1,5 @@
 using DjRequests.Api.Entities;
+using DjRequests.Api.Modules.Common;
 using DjRequests.Api.Modules.Requests.Dtos;
 using DjRequests.Api.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -181,8 +182,6 @@ public sealed class SolicitudService : ISolicitudService
             }
         }
 
-        var now = timeProvider.GetUtcNow();
-
         // Transacción con bloqueo: sala -> sesión (orden consistente)
         await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
@@ -194,14 +193,25 @@ public sealed class SolicitudService : ISolicitudService
 
         var sala = lockedSalas.SingleOrDefault();
 
-        if (sala is null || sala.PurgeAt <= now)
+        if (sala is null)
         {
             await transaction.RollbackAsync(cancellationToken);
             return new SolicitudCreateResult(
                 SolicitudCreateStatus.RoomNotFound, null, null, "Sala no encontrada.", null);
         }
 
-        if (sala.Dj is null || sala.Dj.Estado != "activo")
+        // Bloquear sesión
+        var lockedSessions = await _context.SesionesInvitado
+            .FromSqlRaw("SELECT * FROM sesiones_invitado WHERE sala_id = {0} AND token_hash = {1} FOR UPDATE", sala.Id, tokenHash)
+            .ToListAsync(cancellationToken);
+
+        var sesion = lockedSessions.SingleOrDefault();
+
+        // La hora definitiva se toma después de adquirir ambos bloqueos para
+        // revalidar condiciones temporales que pudieron cambiar durante la espera.
+        var now = timeProvider.GetUtcNow();
+
+        if (sala.PurgeAt <= now || sala.Dj is null || sala.Dj.Estado != "activo")
         {
             await transaction.RollbackAsync(cancellationToken);
             return new SolicitudCreateResult(
@@ -221,13 +231,6 @@ public sealed class SolicitudService : ISolicitudService
             return new SolicitudCreateResult(
                 SolicitudCreateStatus.RoomNotAvailable, null, null, "La sala no está abierta para nuevas solicitudes.", null);
         }
-
-        // Bloquear sesión
-        var lockedSessions = await _context.SesionesInvitado
-            .FromSqlRaw("SELECT * FROM sesiones_invitado WHERE sala_id = {0} AND token_hash = {1} FOR UPDATE", sala.Id, tokenHash)
-            .ToListAsync(cancellationToken);
-
-        var sesion = lockedSessions.SingleOrDefault();
 
         if (sesion is null || sesion.RevokedAt is not null || now >= sesion.ExpiresAt)
         {
@@ -342,6 +345,11 @@ public sealed class SolicitudService : ISolicitudService
         TimeProvider timeProvider,
         CancellationToken cancellationToken = default)
     {
+        if (!PaginationValidation.TryValidate(page, pageSize, out var paginationError))
+        {
+            return new SolicitudListResult(false, null, "Pagination", paginationError);
+        }
+
         var now = timeProvider.GetUtcNow();
 
         // Validar sesión
@@ -364,17 +372,18 @@ public sealed class SolicitudService : ISolicitudService
             return new SolicitudListResult(false, null, "RoomNotFound", "Sala no encontrada.");
         }
 
-        // Consultar solicitudes de ESTA sesión
+        // Todos los invitados de la sala ven el contenido de esa sala.
         var query = _context.Solicitudes
             .AsNoTracking()
-            .Where(s => s.SalaId == roomId && s.SesionId == session.Id)
+            .Where(s => s.SalaId == roomId)
             .Include(s => s.Genero)
             .OrderByDescending(s => s.CreatedAt)
             .ThenBy(s => s.Id);
 
         var totalCount = await query.CountAsync(cancellationToken);
+        var offset = PaginationValidation.GetOffset(page, pageSize);
         var items = await query
-            .Skip((page - 1) * pageSize)
+            .Skip((int)offset)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
@@ -383,7 +392,7 @@ public sealed class SolicitudService : ISolicitudService
             page,
             pageSize,
             totalCount,
-            (page * pageSize) < totalCount);
+            offset + items.Count < totalCount);
 
         return new SolicitudListResult(true, pageResponse, null, null);
     }
@@ -398,6 +407,11 @@ public sealed class SolicitudService : ISolicitudService
         TimeProvider timeProvider,
         CancellationToken cancellationToken = default)
     {
+        if (!PaginationValidation.TryValidate(page, pageSize, out var paginationError))
+        {
+            return new SolicitudListResult(false, null, "Pagination", paginationError);
+        }
+
         var now = timeProvider.GetUtcNow();
 
         // Verificar propiedad de sala
@@ -432,8 +446,9 @@ public sealed class SolicitudService : ISolicitudService
         var orderedQuery = query.OrderByDescending(s => s.CreatedAt).ThenBy(s => s.Id);
 
         var totalCount = await orderedQuery.CountAsync(cancellationToken);
+        var offset = PaginationValidation.GetOffset(page, pageSize);
         var items = await orderedQuery
-            .Skip((page - 1) * pageSize)
+            .Skip((int)offset)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
@@ -442,7 +457,7 @@ public sealed class SolicitudService : ISolicitudService
             page,
             pageSize,
             totalCount,
-            (page * pageSize) < totalCount);
+            offset + items.Count < totalCount);
 
         return new SolicitudListResult(true, pageResponse, null, null);
     }
@@ -455,8 +470,6 @@ public sealed class SolicitudService : ISolicitudService
         TimeProvider timeProvider,
         CancellationToken cancellationToken = default)
     {
-        var now = timeProvider.GetUtcNow();
-
         // Validar estado
         if (string.IsNullOrWhiteSpace(request.Estado))
         {
@@ -474,7 +487,7 @@ public sealed class SolicitudService : ISolicitudService
             return new SolicitudUpdateResult(false, null, "Version", "La versión debe ser un entero positivo.");
         }
 
-        // Transacción con bloqueo: sala -> sesión -> solicitud
+        // Transacción con bloqueo: sala -> solicitud (orden consistente)
         await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
         // Bloquear sala
@@ -484,7 +497,7 @@ public sealed class SolicitudService : ISolicitudService
 
         var sala = lockedSalas.SingleOrDefault();
 
-        if (sala is null || sala.DjId != djId || sala.PurgeAt <= now)
+        if (sala is null || sala.DjId != djId)
         {
             await transaction.RollbackAsync(cancellationToken);
             return new SolicitudUpdateResult(false, null, "RoomNotFound", "Sala no encontrada, ajena o caducada.");
@@ -504,11 +517,21 @@ public sealed class SolicitudService : ISolicitudService
             return new SolicitudUpdateResult(false, null, "SolicitudNotFound", "Solicitud no encontrada.");
         }
 
+        // La hora definitiva se toma después de adquirir ambos bloqueos para
+        // revalidar la caducidad de la sala que pudo cambiar durante la espera.
+        var now = timeProvider.GetUtcNow();
+
+        if (sala.PurgeAt <= now)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new SolicitudUpdateResult(false, null, "RoomNotFound", "Sala no encontrada, ajena o caducada.");
+        }
+
         // Revalidar versión bajo bloqueo
         if (solicitud.Version != request.Version)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return new SolicitudUpdateResult(false, null, "Version", "La versión de la solicitud no coincide con la versión actual.");
+            return new SolicitudUpdateResult(false, null, "VersionObsoleta", "La versión de la solicitud no coincide con la versión actual.");
         }
 
         // Validar transición
@@ -539,7 +562,7 @@ public sealed class SolicitudService : ISolicitudService
         catch (DbUpdateConcurrencyException)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return new SolicitudUpdateResult(false, null, "Version", "Conflicto de concurrencia. La solicitud fue modificada por otra operación.");
+            return new SolicitudUpdateResult(false, null, "Concurrencia", "Conflicto de concurrencia. La solicitud fue modificada por otra operación.");
         }
 
         var response = BuildSolicitudResponse(solicitud);

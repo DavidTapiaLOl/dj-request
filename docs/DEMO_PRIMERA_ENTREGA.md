@@ -61,9 +61,9 @@ Límites que puedes demostrar:
 - **10 solicitudes** máximo por sesión (configurable por sala) → al superarla responde `429`.
 - Enlace no HTTP/HTTPS o género inexistente → `400` con detalle del error.
 
-### 4.2 Invitado ve su lista
+### 4.2 Invitado ve la lista de su sala
 
-El invitado ve **solo sus propias** solicitudes (`GET /api/guest/rooms/{id}/requests`). No ve votos, ni ediciones, ni solicitudes ajenas.
+El invitado ve **todas las canciones de su sala** (`GET /api/guest/rooms/{id}/requests`), sin importar qué invitado las envió. No ve votos ni puede editar solicitudes ajenas. Si intenta consultar otra sala con su token, recibe `404` sin contenido de esa sala.
 
 ### 4.3 DJ gestiona solicitudes
 
@@ -73,7 +73,7 @@ En la pantalla de sala del DJ, la sección **Solicitudes** muestra la lista en t
 - **Reproducir**: `aceptada → reproducida`.
 - **Rechazar**: `pendiente/aceptada → rechazada`.
 
-Transiciones inválidas (por ejemplo, `reproducida → aceptada`) responden `400`. Cada actualización requiere el `version` actual (token de concurrencia optimista); si otro cambio llegó primero, responde `400` por versión desactualizada y la lista se refresca.
+Transiciones inválidas (por ejemplo, `reproducida → aceptada`) responden `400`. Cada actualización requiere el `version` actual (token de concurrencia optimista); si otro cambio llegó primero, responde `409` por versión desactualizada y la lista se refresca. Una `version` omitida, `0` o negativa responde `400`.
 
 ### 4.4 Aislamiento y permisos
 
@@ -93,9 +93,9 @@ Nota: el puerto es `5025` (el de `launchSettings.json`), no 5000.
 | --- | --- |
 | API invitado | `POST/GET /api/guest/rooms/{roomId}/requests` con `X-Guest-Token`, rate limit por IP (`guest-create`/`guest-get`). |
 | API DJ | `GET /api/rooms/{roomId}/requests` (filtros `estado`, `generoId`, paginación) y `PATCH .../requests/{id}` con transiciones validadas. |
-| Servicio | Validación de nombre/enlace/género, idempotencia, cuota por sesión, intervalo entre envíos, bloqueo `FOR UPDATE` en el orden sala → sesión → solicitud, token de concurrencia `Version`. |
+| Servicio | Validación de nombre/enlace/género, idempotencia, cuota por sesión, intervalo entre envíos, bloqueo `FOR UPDATE` en orden sala → sesión (creación) y sala → solicitud (actualización), token de concurrencia `Version`. |
 | Móvil (DJ) | Sección "Solicitudes" en el detalle de sala: lista, aceptar/reproducir/rechazar, estados vacíos/carga/error, pull-to-refresh y paginación. |
-| Pruebas | 26 pruebas de integración de solicitudes sobre PostgreSQL aislado (creación, idempotencia, límites, token, aislamiento, transiciones, concurrencia). |
+| Pruebas | 34 pruebas de integración de solicitudes sobre PostgreSQL aislado (creación, idempotencia, límites, token, aislamiento por sala, paginación, transiciones, concurrencia y revalidación post-bloqueo). |
 
 ## No implementado (fuera de esta entrega)
 
@@ -115,4 +115,4 @@ npx tsc --noEmit
 npx expo export --platform web
 ```
 
-Resultado de la suite completa de integración: 219/220 correctas. La única falla (`GetRoom_UnknownToken_Returns401`) es preexistente: se reprodujo también contra el código en `main` sin cambios de esta rama.
+Resultado de la suite completa de integración: 228/228 correctas, incluida `GetRoom_UnknownToken_Returns401` (ahora pasa porque la respuesta 401 de invitado envía `Cache-Control: no-store`).

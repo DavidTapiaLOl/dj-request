@@ -33,6 +33,10 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
     public GuestLockPauseInterceptor? GuestLockPause { get; private set; }
 
+    public bool EnableSesionLockPause { get; set; }
+
+    public SesionInvitadoLockPauseInterceptor? SesionLockPause { get; private set; }
+
     public IGuestTokenGenerator? CustomGuestTokenGenerator { get; set; }
 
     public WebAppFactory(PostgresFixture postgres)
@@ -77,6 +81,13 @@ public class WebAppFactory : WebApplicationFactory<Program>
             GuestLockPause = guestLockPause;
         }
 
+        SesionInvitadoLockPauseInterceptor? sesionLockPause = null;
+        if (EnableSesionLockPause)
+        {
+            sesionLockPause = new SesionInvitadoLockPauseInterceptor();
+            SesionLockPause = sesionLockPause;
+        }
+
         var customGenerator = CustomCodeGenerator;
         var customGuestGenerator = CustomGuestTokenGenerator;
 
@@ -110,6 +121,10 @@ public class WebAppFactory : WebApplicationFactory<Program>
                 if (guestLockPause is not null)
                 {
                     options.AddInterceptors(guestLockPause);
+                }
+                if (sesionLockPause is not null)
+                {
+                    options.AddInterceptors(sesionLockPause);
                 }
             });
         });

@@ -44,6 +44,7 @@ Content-Type: application/json
 }
 
 ### 4. Invitado: crear sesión con el código (copiar guestToken)
+###    La respuesta incluye room.id, que coincide con el id de la sala del paso 3.
 POST {{baseUrl}}/api/guest-sessions
 Content-Type: application/json
 
@@ -131,6 +132,7 @@ Content-Type: application/json
 }
 
 ### 11. Invitado: envío inmediato tras otro (esperado 429 por intervalo de 30s)
+###    La respuesta incluye la cabecera Retry-After con los segundos restantes.
 ###    Ejecutar justo después del paso 5 sin esperar.
 POST {{baseUrl}}/api/guest/rooms/{{roomId}}/requests
 X-Guest-Token: {{guestToken}}
@@ -156,8 +158,12 @@ Content-Type: application/json
   "idempotencyKey": "d7728c59-a4b3-4e6f-9a81-223344556677"
 }
 
-### 13. Invitado: listar solo sus solicitudes
+### 13. Invitado: listar todas las canciones de su sala
 GET {{baseUrl}}/api/guest/rooms/{{roomId}}/requests?page=1&pageSize=20
+X-Guest-Token: {{guestToken}}
+
+### 13b. Invitado: página fuera de rango (esperado 400)
+GET {{baseUrl}}/api/guest/rooms/{{roomId}}/requests?page=2147483647&pageSize=100
 X-Guest-Token: {{guestToken}}
 
 ### 14. DJ: listar solicitudes de su sala (paginado, con filtros opcionales)
@@ -208,7 +214,7 @@ Content-Type: application/json
   "version": {{version}}
 }
 
-### 20. DJ: versión incorrecta (esperado 400)
+### 20. DJ: versión desactualizada (esperado 409)
 PATCH {{baseUrl}}/api/rooms/{{roomId}}/requests/{{solicitudId}}
 Authorization: Bearer {{accessToken}}
 Content-Type: application/json

@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using DjRequests.Api.Modules.Common;
 using DjRequests.Api.Modules.Guests.Dtos;
 using DjRequests.Api.Modules.Guests.Services;
 using DjRequests.Api.Modules.Requests.Dtos;
@@ -126,11 +128,11 @@ public static class SolicitudEndpoints
         if (!httpContext.Request.Headers.TryGetValue(GuestTokenHeaderName, out var tokenHeader) ||
             string.IsNullOrWhiteSpace(tokenHeader))
         {
-            return Results.Problem(
+            return NoStoreResults.AddNoStore(Results.Problem(
                 detail: "Credencial de invitado requerida.",
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
+                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2"));
         }
 
         var token = tokenHeader.ToString();
@@ -138,11 +140,11 @@ public static class SolicitudEndpoints
         if (httpContext.Request.Headers[GuestTokenHeaderName].Count > 1 ||
             !IsValidBase64UrlToken(token, out var tokenBytes))
         {
-            return Results.Problem(
+            return NoStoreResults.AddNoStore(Results.Problem(
                 detail: "Credencial de invitado inválida.",
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
+                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2"));
         }
 
         var tokenHash = ComputeTokenHash(tokenBytes);
@@ -150,16 +152,16 @@ public static class SolicitudEndpoints
 
         return result.Status switch
         {
-            GuestSessionStatus.Unauthorized => Results.Problem(
+            GuestSessionStatus.Unauthorized => NoStoreResults.AddNoStore(Results.Problem(
                 detail: "Credencial de invitado inválida, revocada o expirada.",
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2"),
-            GuestSessionStatus.RoomNotFound => Results.Problem(
+                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2")),
+            GuestSessionStatus.RoomNotFound => NoStoreResults.AddNoStore(Results.Problem(
                 detail: "Sala no encontrada.",
                 statusCode: StatusCodes.Status404NotFound,
                 title: "Sala no encontrada",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5"),
+                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5")),
             _ => Results.Ok() // Token válido, continuar
         };
     }
@@ -186,16 +188,16 @@ public static class SolicitudEndpoints
         // Obtener hash del token para el servicio (ya validado arriba)
         if (!TryDecodeGuestToken(httpContext.Request.Headers[GuestTokenHeaderName].ToString(), out var tokenHash))
         {
-            return Results.Problem(
+            return NoStoreResults.AddNoStore(Results.Problem(
                 detail: "Credencial de invitado inválida.",
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
+                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2"));
         }
 
         var result = await solicitudService.CreateAsync(roomId, tokenHash, request, timeProvider, cancellationToken);
 
-        return result.Status switch
+        return NoStoreResults.AddNoStore(result.Status switch
         {
             SolicitudCreateStatus.Created => Results.Created($"/api/guest/rooms/{roomId}/requests/{result.Response!.Id}", result.Response),
             SolicitudCreateStatus.IdempotentReplay => Results.Ok(result.Response),
@@ -211,7 +213,7 @@ public static class SolicitudEndpoints
             SolicitudCreateStatus.QuotaExceeded => Results.Problem(
                 detail: result.ErrorMessage, statusCode: StatusCodes.Status429TooManyRequests,
                 title: "Límite de solicitudes alcanzado", type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.16"),
-            SolicitudCreateStatus.RateLimited => CreateRateLimitedResponse(result.RetryAfterSeconds),
+            SolicitudCreateStatus.RateLimited => CreateRateLimitedResponse(httpContext, result.RetryAfterSeconds),
             SolicitudCreateStatus.ValidationFailed => Results.ValidationProblem(new Dictionary<string, string[]>
             {
                 [result.ErrorCode!] = new[] { result.ErrorMessage! }
@@ -220,33 +222,26 @@ public static class SolicitudEndpoints
                 detail: result.ErrorMessage, statusCode: StatusCodes.Status409Conflict,
                 title: "Conflicto", type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.10"),
             _ => Results.Problem("Error inesperado.", statusCode: 500)
-        };
+        });
     }
 
-    private static IResult CreateRateLimitedResponse(int? retryAfterSeconds)
+    private static IResult CreateRateLimitedResponse(HttpContext httpContext, int? retryAfterSeconds)
     {
-        var result = Results.Problem(
-            detail: "Debe esperar entre envíos.",
+        if (retryAfterSeconds.HasValue)
+        {
+            httpContext.Response.Headers.RetryAfter =
+                Math.Max(1, retryAfterSeconds.Value).ToString(CultureInfo.InvariantCulture);
+        }
+
+        var detail = retryAfterSeconds.HasValue
+            ? $"Debe esperar {retryAfterSeconds.Value} segundos entre envíos."
+            : "Debe esperar entre envíos.";
+
+        return Results.Problem(
+            detail: detail,
             statusCode: StatusCodes.Status429TooManyRequests,
             title: "Demasiadas solicitudes",
             type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.16");
-
-        if (retryAfterSeconds.HasValue)
-        {
-            // Agregar Retry-After al ProblemDetails
-            return Results.Json(
-                new
-                {
-                    type = "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.16",
-                    title = "Demasiadas solicitudes",
-                    status = 429,
-                    detail = "Debe esperar entre envíos.",
-                    retryAfter = retryAfterSeconds.Value
-                },
-                statusCode: 429);
-        }
-
-        return result;
     }
 
     #endregion
@@ -270,36 +265,40 @@ public static class SolicitudEndpoints
             return validationResult;
         }
 
-        if (page < 1 || pageSize < 1 || pageSize > 100)
+        if (!PaginationValidation.TryValidate(page, pageSize, out var paginationError))
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
+            return NoStoreResults.AddNoStore(Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["page"] = new[] { "page debe ser >= 1 y pageSize entre 1 y 100." }
-            });
+                ["page"] = new[] { paginationError }
+            }));
         }
 
         if (!TryDecodeGuestToken(httpContext.Request.Headers[GuestTokenHeaderName].ToString(), out var tokenHash))
         {
-            return Results.Problem(
+            return NoStoreResults.AddNoStore(Results.Problem(
                 detail: "Credencial de invitado inválida.",
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "No autorizado",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
+                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2"));
         }
 
         var result = await solicitudService.ListForGuestAsync(roomId, tokenHash, page, pageSize, timeProvider, cancellationToken);
 
         if (!result.Success)
         {
-            return result.ErrorCode switch
+            return NoStoreResults.AddNoStore(result.ErrorCode switch
             {
                 "Unauthorized" => Results.Problem(result.ErrorMessage, statusCode: 401, title: "No autorizado"),
                 "RoomNotFound" => Results.Problem(result.ErrorMessage, statusCode: 404, title: "Sala no encontrada"),
+                "Pagination" => Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["page"] = new[] { result.ErrorMessage! }
+                }),
                 _ => Results.Problem("Error inesperado.", statusCode: 500)
-            };
+            });
         }
 
-        return Results.Ok(result.Page);
+        return NoStoreResults.AddNoStore(Results.Ok(result.Page));
     }
 
     #endregion
@@ -320,11 +319,11 @@ public static class SolicitudEndpoints
     {
         var djId = GetDjId(user);
 
-        if (page < 1 || pageSize < 1 || pageSize > 100)
+        if (!PaginationValidation.TryValidate(page, pageSize, out var paginationError))
         {
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["page"] = new[] { "page debe ser >= 1 y pageSize entre 1 y 100." }
+                ["page"] = new[] { paginationError }
             });
         }
 
@@ -335,6 +334,10 @@ public static class SolicitudEndpoints
             return result.ErrorCode switch
             {
                 "RoomNotFound" => Results.Problem(result.ErrorMessage, statusCode: 404, title: "Sala no encontrada"),
+                "Pagination" => Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["page"] = new[] { result.ErrorMessage! }
+                }),
                 _ => Results.Problem("Error inesperado.", statusCode: 500)
             };
         }
@@ -368,6 +371,8 @@ public static class SolicitudEndpoints
                 {
                     [result.ErrorCode!] = new[] { result.ErrorMessage! }
                 }),
+                "VersionObsoleta" or "Concurrencia" => Results.Problem(
+                    result.ErrorMessage, statusCode: StatusCodes.Status409Conflict, title: "Conflicto"),
                 "RoomNotFound" or "SolicitudNotFound" => Results.Problem(result.ErrorMessage, statusCode: 404, title: "No encontrado"),
                 _ => Results.Problem("Error inesperado.", statusCode: 500)
             };
