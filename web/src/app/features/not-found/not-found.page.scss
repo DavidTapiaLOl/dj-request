@@ -1,0 +1,16 @@
+:host {
+  display: block;
+}
+
+.page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: var(--djr-space-5) var(--djr-space-4);
+}
+
+.panel {
+  width: 100%;
+  max-width: 28rem;
+}

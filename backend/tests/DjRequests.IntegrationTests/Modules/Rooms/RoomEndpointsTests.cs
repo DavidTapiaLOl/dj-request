@@ -156,7 +156,7 @@ public class RoomEndpointsTests : IAsyncLifetime
         Assert.Equal("America/Mexico_City", room.Timezone);
         Assert.True(room.HasEnded == false);
         Assert.True(room.CanReceiveRequests == true);
-        Assert.Contains(room.Codigo, room.InviteUrl);
+        Assert.Equal($"http://localhost:4200/join/{room.Codigo}", room.InviteUrl);
 
         // Codigo: 10 caracteres, A-Z y 2-9, sin I O 0 1
         Assert.Equal(10, room.Codigo.Length);

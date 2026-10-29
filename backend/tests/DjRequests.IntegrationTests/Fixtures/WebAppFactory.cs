@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -16,6 +17,7 @@ namespace DjRequests.IntegrationTests.Fixtures;
 public class WebAppFactory : WebApplicationFactory<Program>
 {
     private readonly PostgresFixture _postgres;
+    private readonly IReadOnlyDictionary<string, string?> _settings;
     private readonly string _dbName = $"dj_requests_test_{Guid.NewGuid():N}";
     private bool _disposed;
 
@@ -39,9 +41,12 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
     public IGuestTokenGenerator? CustomGuestTokenGenerator { get; set; }
 
-    public WebAppFactory(PostgresFixture postgres)
+    public WebAppFactory(
+        PostgresFixture postgres,
+        IReadOnlyDictionary<string, string?>? settings = null)
     {
         _postgres = postgres;
+        _settings = settings ?? new Dictionary<string, string?>();
     }
 
     public async Task InitializeAsync()
@@ -55,6 +60,12 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        if (_settings.Count > 0)
+        {
+            builder.ConfigureAppConfiguration((_, configuration) =>
+                configuration.AddInMemoryCollection(_settings));
+        }
+
         var testConnectionString = _postgres.Container.GetConnectionString()
             .Replace("Database=postgres", $"Database={_dbName}");
 

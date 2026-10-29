@@ -1,0 +1,194 @@
+<main class="page">
+  <header class="topbar">
+    <a class="topbar__brand" routerLink="/">DJ Requests</a>
+    @if (!sessionExpired()) {
+      <button
+        class="button button--ghost"
+        type="button"
+        (click)="refresh()"
+        [disabled]="loadingRoom() || loadingList()"
+      >
+        {{ loadingRoom() || loadingList() ? 'Actualizando…' : 'Actualizar' }}
+      </button>
+    }
+  </header>
+
+  @if (sessionExpired()) {
+    <section class="panel notice" role="alert">
+      <h1>Tu sesión expiró</h1>
+      <p>Vuelve a entrar con el código de la sala para seguir viendo y enviando canciones.</p>
+      <a class="button button--primary" routerLink="/">Volver a entrar</a>
+    </section>
+  } @else if (roomError()) {
+    <section class="panel notice">
+      <h1>No pudimos abrir la sala</h1>
+      <p>{{ roomError() }}</p>
+      <a class="button button--secondary" routerLink="/">Volver al inicio</a>
+    </section>
+  } @else if (loadingRoom() && !room()) {
+    <section class="panel loading" role="status" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      <p>Cargando la sala…</p>
+    </section>
+  } @else if (room(); as currentRoom) {
+    <section class="panel room">
+      <div class="room__heading">
+        <div>
+          <h1 class="room__title">{{ currentRoom.name }}</h1>
+          <p class="room__meta">{{ schedule() }} · {{ currentRoom.timezone }}</p>
+        </div>
+        <span [class]="roomStateClass()">{{ roomState() }}</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="section__title">Pedir una canción</h2>
+
+      @if (unavailableReason(); as reason) {
+        <p class="notice-text" role="status">{{ reason }}</p>
+      } @else {
+        <form class="form" [formGroup]="form" (ngSubmit)="onSubmit()" novalidate>
+          <div class="form__grid">
+            <label class="field field--wide">
+              <span class="field__label">Canción *</span>
+              <input
+                class="field__input"
+                [class.field__input--invalid]="showError('nombre')"
+                type="text"
+                formControlName="nombre"
+                maxlength="200"
+                autocomplete="off"
+              />
+              @if (showError('nombre')) {
+                <span class="field__error" role="alert">{{ errorFor('nombre') }}</span>
+              }
+            </label>
+
+            <label class="field">
+              <span class="field__label">Artista</span>
+              <input
+                class="field__input"
+                [class.field__input--invalid]="showError('artista')"
+                type="text"
+                formControlName="artista"
+                maxlength="200"
+                autocomplete="off"
+              />
+              @if (showError('artista')) {
+                <span class="field__error" role="alert">{{ errorFor('artista') }}</span>
+              }
+            </label>
+
+            <label class="field">
+              <span class="field__label">Género</span>
+              <select class="field__select" formControlName="generoId">
+                <option [ngValue]="null">Sin género</option>
+                @for (genero of genres(); track genero.id) {
+                  <option [ngValue]="genero.id">{{ genero.nombre }}</option>
+                }
+              </select>
+              @if (genresError()) {
+                <span class="field__help">
+                  No se pudieron cargar los géneros; el género es opcional.
+                </span>
+              }
+            </label>
+
+            <label class="field field--wide">
+              <span class="field__label">Enlace</span>
+              <input
+                class="field__input"
+                [class.field__input--invalid]="showError('enlace')"
+                type="url"
+                formControlName="enlace"
+                maxlength="2048"
+                inputmode="url"
+                autocomplete="off"
+                placeholder="https://..."
+              />
+              <span class="field__help">Opcional. Debe empezar por http:// o https://.</span>
+              @if (showError('enlace')) {
+                <span class="field__error" role="alert">{{ errorFor('enlace') }}</span>
+              }
+            </label>
+          </div>
+
+          @if (submitError()) {
+            <p class="form__error" role="alert">{{ submitError() }}</p>
+          }
+          @if (submitSuccess()) {
+            <p class="form__success" role="status">{{ submitSuccess() }}</p>
+          }
+
+          <button class="button button--primary" type="submit" [disabled]="submitting()">
+            {{ submitting() ? 'Enviando…' : 'Enviar canción' }}
+          </button>
+        </form>
+      }
+    </section>
+
+    <section class="panel">
+      <div class="list__heading">
+        <h2 class="section__title">Canciones de la sala</h2>
+        <span class="list__count">{{ totalCount() }}</span>
+      </div>
+
+      @if (listError()) {
+        <div class="notice" role="alert">
+          <p>{{ listError() }}</p>
+          <button class="button button--secondary" type="button" (click)="refresh()">
+            Reintentar
+          </button>
+        </div>
+      } @else if (loadingList() && items().length === 0) {
+        <div class="loading" role="status" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <p>Cargando canciones…</p>
+        </div>
+      } @else if (items().length === 0) {
+        <p class="empty">Todavía no hay canciones en esta sala. ¡Sé el primero en pedir una!</p>
+      } @else {
+        <ul class="list">
+          @for (solicitud of items(); track solicitud.id) {
+            <li class="song">
+              <div class="song__main">
+                <h3 class="song__title">{{ solicitud.nombre }}</h3>
+                @if (solicitud.artista) {
+                  <p class="song__artist">{{ solicitud.artista }}</p>
+                }
+                <p class="song__meta">
+                  @if (solicitud.generoNombre) {
+                    <span>{{ solicitud.generoNombre }}</span>
+                  }
+                  <span>{{ createdLabel(solicitud.createdAt) }}</span>
+                </p>
+                @if (solicitud.enlace) {
+                  <a
+                    class="song__link"
+                    [href]="solicitud.enlace"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Abrir enlace
+                  </a>
+                }
+              </div>
+              <span [class]="estadoClass(solicitud.estado)">{{ estadoLabel(solicitud.estado) }}</span>
+            </li>
+          }
+        </ul>
+
+        @if (hasMore()) {
+          <button
+            class="button button--secondary button--full"
+            type="button"
+            (click)="loadMore()"
+            [disabled]="loadingMore()"
+          >
+            {{ loadingMore() ? 'Cargando…' : 'Cargar más' }}
+          </button>
+        }
+      }
+    </section>
+  }
+</main>

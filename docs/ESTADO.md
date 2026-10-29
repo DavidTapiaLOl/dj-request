@@ -1,4 +1,70 @@
-﻿# DJ Requests — Estado de la tarea 06 (correcciones de solicitudes)
+﻿# DJ Requests — Estado de la tarea 08 (beta LAN)
+
+## Resumen
+Preparación de la beta LAN para demostrar desde teléfonos en el mismo Wi-Fi: API en `0.0.0.0:5000`, web Angular en `0.0.0.0:4200` con proxy relativo, Expo web en `8081`, enlaces de invitación con la IP LAN y CORS restringido al origen exacto de Expo. La IP se inyecta por variables de entorno/User Secrets; no queda hardcodeada en la aplicación.
+
+## Cambios
+- `FrontendUrlOptions.AllowHttpLan` y validador: HTTP LAN deshabilitado por defecto, solo en `Development`, solo IPv4 privada RFC1918; se conservan URL absoluta, sin credenciales/query/fragmento y HTTPS obligatorio fuera de Development.
+- `Program.cs`: orígenes adicionales de Expo configurables con `Cors:AdditionalOrigins`; se conserva `http://localhost:8081` y no se usa `AllowAnyOrigin`.
+- `Properties/launchSettings.json`: perfil `http-lan` en `http://0.0.0.0:5000` (`Development`).
+- `web/package.json`: script `start:lan` con `--host 0.0.0.0 --port 4200`; el proxy sigue apuntando a `127.0.0.1:5000`.
+- `web/src/app/core/ids.ts`: UUID v4 con `crypto.getRandomValues` cuando `crypto.randomUUID` no existe; sin `Math.random`.
+- `mobile/.env`: solo cambia `EXPO_PUBLIC_API_URL` a la IP LAN. `mobile/package.json`: script `web:lan`.
+- `mobile/app/(app)/room/[id].tsx`: el QR y `Share` usan `room.inviteUrl`; se añade enlace seleccionable y mensaje de respaldo cuando compartir/copiar no está disponible.
+- Pruebas nuevas: validador HTTP LAN, integración de `inviteUrl` con `Frontend:BaseUrl` LAN y generación de UUID v4.
+- `docs/DEMO_LAN.md`: configuración, orden de arranque, URLs, cambio de IP, aislamiento escolar, firewall y retirada de reglas.
+
+## Resultados reales
+- **Backend**: 242/242 pruebas correctas con PostgreSQL 17 (Testcontainers).
+- **Web**: `npm run build` correcto; `npm test -- --watch=false` -> 4 archivos, 17/17 correctas.
+- **Móvil**: `npx tsc --noEmit` sin errores; `npx expo export --platform web` correcto (carga `EXPO_PUBLIC_API_URL`).
+- **API LAN**: PID 27092, escucha en `0.0.0.0:5000`; `/health/live` y `/health/ready` responden 200 por `127.0.0.1` y `192.168.68.107`; `/api/generos` por LAN devuelve 11 géneros en JSON.
+- **CORS**: preflight desde `http://192.168.68.107:8081` devuelve 204 con `Access-Control-Allow-Origin` exacto.
+- **inviteUrl**: verificado por prueba de integración como `http://192.168.68.107:4200/join/{Codigo}`.
+- **Firewall**: perfil activo Público; reglas documentadas, no aplicadas (requieren administrador).
+- Sin migraciones, sin borrar datos, sin commit ni push.
+
+## Pendiente
+- Levantar Angular y Expo manualmente en terminales independientes y completar la prueba en teléfonos (QR, envío, actualización, aceptar/reproducir). No se declara probado en dispositivo físico.
+
+---
+
+# DJ Requests — Estado de la tarea 07 (web de invitados)
+
+## Resumen
+Primera versión funcional de la web de invitados en `web/` (Angular 21 standalone): entrada por código o enlace QR, sesión de invitado por sala, envío de solicitudes y listado de todas las canciones de la sala. No incluye registro/login de invitados, votos, edición de solicitudes ajenas, playlists, WebSockets ni polling.
+
+## Cambios de backend
+- `backend/src/DjRequests.Api/Modules/Genres/Dtos/GeneroDto.cs` - **nuevo**: `Id` + `Nombre`.
+- `backend/src/DjRequests.Api/Modules/Genres/Endpoints/GeneroEndpoints.cs` - **nuevo**: `GET /api/generos`, solo activos, orden por nombre, `AsNoTracking`.
+- `backend/src/DjRequests.Api/Program.cs` - registro de `MapGeneroEndpoints()`.
+- `backend/src/DjRequests.Api/appsettings.Development.json` - `Frontend:BaseUrl` pasa a `http://localhost:4200`; el validador existente se conserva.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Genres/GeneroEndpointsTests.cs` - **nuevo**: activos ordenados y exclusión de inactivos.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Rooms/RoomEndpointsTests.cs` - `inviteUrl` verificado como `http://localhost:4200/join/{Codigo}`.
+
+## Cambios de web
+- `web/proxy.conf.json` y script `start` con `--proxy-config`: `/api` -> `http://127.0.0.1:5000` (solo desarrollo).
+- `web/src/app/core/`: configuración, modelos, errores HTTP diferenciados (red, validación, 404, 409, 429 con `Retry-After`, cuota), sesión por sala en `sessionStorage`, servicios de invitado y géneros, utilidades de idempotencia y etiquetas.
+- `web/src/app/features/join-code`, `web/src/app/features/room`, `web/src/app/features/not-found`: flujo completo, reactive forms, validaciones, paginación "Cargar más", "Actualizar", estados de carga/vacío/error y sesión caducada.
+- `web/src/styles.scss` y tokens `--djr-*`: fondo oscuro, acento violeta, componentes base, responsive y `prefers-reduced-motion`.
+- Pruebas: sesión por sala/reutilización/dedupe, formulario, normalización, reintento idempotente, éxito, cuota, paginación y reingreso.
+
+## Resultados reales
+- **Build web**: `npm run build` correcto; salida `web/dist/dj-requests-web`.
+- **Pruebas web**: `npm test -- --watch=false` -> 3 archivos, 14/14 correctas (Vitest).
+- **Build backend**: correcto, 0 errores y 1 advertencia preexistente (CS0618 en `DatabaseFixture`); se compiló en salida temporal porque la API en ejecución bloqueaba `bin\Debug`.
+- **Pruebas backend**: 230/230 correctas con `dotnet vstest` sobre PostgreSQL 17 (Testcontainers).
+- **Migraciones**: ninguna generada ni aplicada; `dj_requests` no fue tocada.
+- **Dependencias**: sin altas ni actualizaciones; instalación con `npx --yes npm@11.6.2 install`.
+- **Git**: rama `feat/guest-web`; sin commit ni push. `web/` sigue sin seguimiento.
+
+## Comprobación manual
+- **Pendiente**: no se ejecutó el recorrido visual completo. Las instancias abiertas preceden a estos cambios: la API en `5000` responde `404` a `/api/generos` y el servidor Angular en `4200` devuelve `index.html` para `/api/generos` (no tiene cargado el proxy nuevo). Para probar: reiniciar la API y ejecutar `npm start` en `web/`; después, código -> sala -> enviar canción -> verla en la app del DJ -> cambiar estado -> "Actualizar".
+- **Límite conocido**: el enlace/QR usa `http://localhost:4200/join/CODIGO`, que no es accesible desde otro teléfono; la configuración LAN queda pendiente y no se desactivaron validadores.
+
+---
+
+# DJ Requests — Estado de la tarea 06 (correcciones de solicitudes)
 
 ## Resumen
 Corrección de los 7 hallazgos de la demo de solicitudes: listado de invitados por sala, separación de errores 400/409, 429 con `Retry-After`, revalidación temporal tras adquirir ambos bloqueos, paginación segura, `Cache-Control: no-store` en todas las respuestas de invitado y actualización de documentación.

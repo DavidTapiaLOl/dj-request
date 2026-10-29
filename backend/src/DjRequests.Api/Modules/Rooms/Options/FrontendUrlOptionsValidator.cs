@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
@@ -64,11 +66,34 @@ public sealed class FrontendUrlOptionsValidator : IValidateOptions<FrontendUrlOp
                 || host == "::1";
             if (!isLoopback)
             {
-                return ValidateOptionsResult.Fail(
-                    "Frontend.BaseUrl con HTTP solo se permite en localhost/loopback durante Development.");
+                if (!options.AllowHttpLan)
+                {
+                    return ValidateOptionsResult.Fail(
+                        "Frontend.BaseUrl con HTTP fuera de loopback requiere Frontend:AllowHttpLan=true durante Development.");
+                }
+
+                if (!IsPrivateIpv4(host))
+                {
+                    return ValidateOptionsResult.Fail(
+                        "Frontend:AllowHttpLan solo permite direcciones IPv4 privadas RFC1918.");
+                }
             }
         }
 
         return ValidateOptionsResult.Success;
+    }
+
+    private static bool IsPrivateIpv4(string host)
+    {
+        if (!IPAddress.TryParse(host, out var address)
+            || address.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return false;
+        }
+
+        var bytes = address.GetAddressBytes();
+        return bytes[0] == 10
+            || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+            || (bytes[0] == 192 && bytes[1] == 168);
     }
 }

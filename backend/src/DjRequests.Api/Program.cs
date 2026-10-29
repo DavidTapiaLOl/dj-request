@@ -4,6 +4,7 @@ using DjRequests.Api.Entities;
 using DjRequests.Api.Modules.Accounts.Endpoints;
 using DjRequests.Api.Modules.Accounts.Options;
 using DjRequests.Api.Modules.Accounts.Policies;
+using DjRequests.Api.Modules.Genres.Endpoints;
 using DjRequests.Api.Modules.Guests.Endpoints;
 using DjRequests.Api.Modules.Guests.Options;
 using DjRequests.Api.Modules.Guests.Services;
@@ -78,12 +79,18 @@ builder.Services.AddOptions<FrontendUrlOptions>()
     .Bind(builder.Configuration.GetSection(FrontendUrlOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<FrontendUrlOptions>, FrontendUrlOptionsValidator>();
+
+var additionalExpoOrigins = builder.Configuration
+    .GetSection("Cors:AdditionalOrigins")
+    .Get<string[]>()
+    ?? Array.Empty<string>();
+
 builder.Services.AddCors(options =>
     {
         options.AddPolicy("ExpoDevelopment", policy =>
         {
             policy
-                .WithOrigins("http://localhost:8081")
+                .WithOrigins(["http://localhost:8081", .. additionalExpoOrigins])
                 .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .WithHeaders("Content-Type", "Authorization")
                 .WithExposedHeaders("Retry-After");
@@ -260,6 +267,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapHealthEndpoints();
+app.MapGeneroEndpoints();
 app.MapAuthEndpoints();
 app.MapRoomEndpoints();
 app.MapGuestEndpoints();

@@ -7,6 +7,8 @@ import {
   StyleSheet,
   Share,
   Platform,
+  Linking,
+  Pressable,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { request, listSolicitudes, updateSolicitudState, ApiError, NetworkError } from "@/api/client";
@@ -18,7 +20,7 @@ import QRCode from "react-native-qrcode-svg";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { AppButton } from "@/components/AppButton";
-import { colors, radius, spacing, typography } from "@/theme/theme";
+import { colors, layout, radius, spacing, typography } from "@/theme/theme";
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -26,6 +28,37 @@ const UUID_REGEX =
 function isValidUuid(value: string): boolean {
   return UUID_REGEX.test(value);
 }
+
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const linkAnchorStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: spacing.sm,
+  minHeight: layout.minTouchTarget,
+  paddingLeft: spacing.lg,
+  paddingRight: spacing.lg,
+  paddingTop: spacing.md,
+  paddingBottom: spacing.md,
+  border: `1px solid ${colors.border}`,
+  borderRadius: radius.control,
+  backgroundColor: colors.surfaceRaised,
+  textDecoration: "none",
+  boxSizing: "border-box",
+};
+
+type WebNavigator = {
+  share?: (data: { title?: string; text?: string; url?: string }) => Promise<void>;
+  clipboard?: { writeText?: (text: string) => Promise<void> };
+};
 
 function SolicitudBadge({ estado }: { estado: string }) {
   let backgroundColor: string = colors.surfaceRaised;
@@ -73,6 +106,7 @@ export default function RoomDetailScreen() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [shareMessage, setShareMessage] = React.useState<string | null>(null);
   const [confirmClose, setConfirmClose] = React.useState(false);
   const conflictReloadRef = React.useRef(false);
 
@@ -83,6 +117,7 @@ export default function RoomDetailScreen() {
   const [solicitudesLoading, setSolicitudesLoading] = React.useState(false);
   const [solicitudesError, setSolicitudesError] = React.useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = React.useState<string | null>(null);
+  const [linkError, setLinkError] = React.useState<{ id: string; message: string } | null>(null);
 
   const loadRoom = React.useCallback(async () => {
     if (!id) {
@@ -248,19 +283,55 @@ export default function RoomDetailScreen() {
     }
   };
 
+  const handleOpenEnlace = React.useCallback((solicitudId: string, url: string) => {
+    if (Platform.OS === "web" || !isAbsoluteHttpUrl(url)) return;
+
+    setLinkError(null);
+    Linking.openURL(url).catch(() => {
+      setLinkError({
+        id: solicitudId,
+        message: "No se pudo abrir el enlace. Verifica la URL o inténtalo de nuevo.",
+      });
+    });
+  }, []);
+
   const handleShare = async () => {
     if (!room) return;
 
+    setShareMessage(null);
     const message = `Únete a la sala "${room.nombre}" con el código ${room.codigo}: ${room.inviteUrl}`;
 
     try {
-      await Share.share(
-        Platform.OS === "web"
-          ? { message }
-          : { message, url: room.inviteUrl }
-      );
+      if (Platform.OS === "web") {
+        const webNavigator = (globalThis as { navigator?: WebNavigator }).navigator;
+
+        if (typeof webNavigator?.share === "function") {
+          await webNavigator.share({
+            title: room.nombre,
+            text: message,
+            url: room.inviteUrl,
+          });
+          setShareMessage("Enlace compartido.");
+          return;
+        }
+
+        if (typeof webNavigator?.clipboard?.writeText === "function") {
+          await webNavigator.clipboard.writeText(room.inviteUrl);
+          setShareMessage("Enlace copiado al portapapeles.");
+          return;
+        }
+
+        setShareMessage(
+          "Este navegador no puede compartir ni copiar automáticamente. Selecciona el enlace de abajo y cópialo manualmente."
+        );
+        return;
+      }
+
+      await Share.share({ message, url: room.inviteUrl });
     } catch {
-      setError("No se pudo abrir el diálogo de compartir.");
+      setShareMessage(
+        "No se pudo compartir ni copiar automáticamente. Selecciona el enlace de abajo y cópialo manualmente."
+      );
     }
   };
 
@@ -323,6 +394,11 @@ export default function RoomDetailScreen() {
 
 return (
     <ScreenContainer>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
       <ScreenHeader showBack={true} />
 
       {/* Nombre complete in its own row */}
@@ -435,9 +511,13 @@ return (
         <View style={{ marginBottom: spacing.xl, alignItems: "center" }}>
           <QRCode value={roomSafe.inviteUrl} size={150} color="#000000" backgroundColor="#ffffff" />
         </View>
+        <Text style={styles.inviteUrl} selectable>
+          {roomSafe.inviteUrl}
+        </Text>
         <AppButton title="Compartir enlace" onPress={handleShare} variant="secondary" style={{ marginBottom: spacing.lg }} />
+        {shareMessage ? <Text style={styles.webNote}>{shareMessage}</Text> : null}
         <Text style={styles.webNote}>
-          Nota: la vista de invitados para web aún no está disponible.
+          También puedes dictar el código de acceso o dejar que escaneen el QR.
         </Text>
       </View>
 
@@ -472,78 +552,128 @@ return (
           </View>
         ) : (
           <>
-            {solicitudes.map(s => (
-              <View key={s.id} style={styles.solicitudCard}>
-                <View style={styles.solicitudTopRow}>
-                  <Text style={styles.solicitudNombre} numberOfLines={2}>{s.nombre}</Text>
-                  <SolicitudBadge estado={s.estado} />
-                </View>
+            {solicitudes.map(s => {
+              const enlace = s.enlace;
+              const enlaceValido = enlace ? isAbsoluteHttpUrl(enlace) : false;
 
-                {(s.artista || s.generoNombre) && (
-                  <View style={styles.solicitudMetaRow}>
-                    {s.artista && (
-                      <Text style={styles.solicitudMeta}>{s.artista}</Text>
+              return (
+                <View key={s.id} style={styles.solicitudCard}>
+                  <View style={styles.solicitudTopRow}>
+                    <Text style={styles.solicitudNombre} numberOfLines={2}>{s.nombre}</Text>
+                    <SolicitudBadge estado={s.estado} />
+                  </View>
+
+                  {(s.artista || s.generoNombre) && (
+                    <View style={styles.solicitudMetaRow}>
+                      {s.artista && (
+                        <Text style={styles.solicitudMeta}>{s.artista}</Text>
+                      )}
+                      {s.artista && s.generoNombre && (
+                        <Text style={styles.solicitudMetaDot}>·</Text>
+                      )}
+                      {s.generoNombre && (
+                        <Text style={styles.solicitudMeta}>{s.generoNombre}</Text>
+                      )}
+                    </View>
+                  )}
+
+                  {enlace ? (
+                    <View style={styles.linkSection}>
+                      {Platform.OS === "web" ? (
+                        enlaceValido ? (
+                          <a
+                            href={enlace}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Abrir canción: ${enlace}`}
+                            style={linkAnchorStyle}
+                          >
+                            <Ionicons name="link-outline" size={16} color={colors.primary} />
+                            <Text style={styles.linkText}>Abrir canción</Text>
+                          </a>
+                        ) : (
+                          <View style={[styles.linkPressable, styles.linkPressableDisabled]}>
+                            <Ionicons name="link-outline" size={16} color={colors.textSecondary} />
+                            <Text style={styles.linkTextDisabled}>Abrir canción</Text>
+                          </View>
+                        )
+                      ) : (
+                        <Pressable
+                          onPress={() => handleOpenEnlace(s.id, enlace)}
+                          disabled={!enlaceValido}
+                          accessibilityRole="link"
+                          accessibilityLabel={`Abrir canción: ${enlace}`}
+                          accessibilityState={{ disabled: !enlaceValido }}
+                          style={[styles.linkPressable, !enlaceValido && styles.linkPressableDisabled]}
+                        >
+                          <Ionicons
+                            name="link-outline"
+                            size={16}
+                            color={enlaceValido ? colors.primary : colors.textSecondary}
+                          />
+                          <Text style={enlaceValido ? styles.linkText : styles.linkTextDisabled}>
+                            Abrir canción
+                          </Text>
+                        </Pressable>
+                      )}
+                      <Text style={styles.solicitudEnlace} numberOfLines={2}>{enlace}</Text>
+                      {!enlaceValido && (
+                        <Text style={styles.linkErrorText}>URL no válida</Text>
+                      )}
+                      {linkError?.id === s.id && (
+                        <Text style={styles.linkErrorText}>{linkError.message}</Text>
+                      )}
+                    </View>
+                  ) : null}
+
+                  <View style={styles.solicitudActions}>
+                    {s.estado === "pendiente" && (
+                      <>
+                        <AppButton
+                          title="Aceptar"
+                          onPress={() => handleSolicitudAction(s, "aceptada")}
+                          variant="primary"
+                          disabled={actionLoadingId !== null}
+                          loading={actionLoadingId === s.id}
+                          style={styles.solicitudActionBtn}
+                        />
+                        <AppButton
+                          title="Rechazar"
+                          onPress={() => handleSolicitudAction(s, "rechazada")}
+                          variant="danger"
+                          disabled={actionLoadingId !== null}
+                          style={styles.solicitudActionBtn}
+                        />
+                      </>
                     )}
-                    {s.artista && s.generoNombre && (
-                      <Text style={styles.solicitudMetaDot}>·</Text>
+
+                    {s.estado === "aceptada" && (
+                      <>
+                        <AppButton
+                          title="Marcar como reproducida"
+                          onPress={() => handleSolicitudAction(s, "reproducida")}
+                          variant="primary"
+                          disabled={actionLoadingId !== null}
+                          loading={actionLoadingId === s.id}
+                          style={styles.solicitudActionBtn}
+                        />
+                        <AppButton
+                          title="Rechazar"
+                          onPress={() => handleSolicitudAction(s, "rechazada")}
+                          variant="danger"
+                          disabled={actionLoadingId !== null}
+                          style={styles.solicitudActionBtn}
+                        />
+                      </>
                     )}
-                    {s.generoNombre && (
-                      <Text style={styles.solicitudMeta}>{s.generoNombre}</Text>
+
+                    {(s.estado === "reproducida" || s.estado === "rechazada") && (
+                      <Text style={styles.solicitudNoActions}>Sin acciones disponibles</Text>
                     )}
                   </View>
-                )}
-
-                {s.enlace && (
-                  <Text style={styles.solicitudEnlace} numberOfLines={1}>{s.enlace}</Text>
-                )}
-
-                <View style={styles.solicitudActions}>
-                  {s.estado === "pendiente" && (
-                    <>
-                      <AppButton
-                        title="Aceptar"
-                        onPress={() => handleSolicitudAction(s, "aceptada")}
-                        variant="primary"
-                        disabled={actionLoadingId !== null}
-                        loading={actionLoadingId === s.id}
-                        style={styles.solicitudActionBtn}
-                      />
-                      <AppButton
-                        title="Rechazar"
-                        onPress={() => handleSolicitudAction(s, "rechazada")}
-                        variant="danger"
-                        disabled={actionLoadingId !== null}
-                        style={styles.solicitudActionBtn}
-                      />
-                    </>
-                  )}
-
-                  {s.estado === "aceptada" && (
-                    <>
-                      <AppButton
-                        title="Marcar reproducida"
-                        onPress={() => handleSolicitudAction(s, "reproducida")}
-                        variant="primary"
-                        disabled={actionLoadingId !== null}
-                        loading={actionLoadingId === s.id}
-                        style={styles.solicitudActionBtn}
-                      />
-                      <AppButton
-                        title="Rechazar"
-                        onPress={() => handleSolicitudAction(s, "rechazada")}
-                        variant="danger"
-                        disabled={actionLoadingId !== null}
-                        style={styles.solicitudActionBtn}
-                      />
-                    </>
-                  )}
-
-                  {(s.estado === "reproducida" || s.estado === "rechazada") && (
-                    <Text style={styles.solicitudNoActions}>Sin acciones disponibles</Text>
-                  )}
                 </View>
-              </View>
-            ))}
+              );
+            })}
 
             {solicitudesLoading && (
               <View style={styles.solicitudesCentered}>
@@ -562,6 +692,7 @@ return (
           </>
         )}
       </View>
+      </ScrollView>
     </ScreenContainer>
   );
 }
@@ -571,6 +702,13 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: spacing.lg,
     backgroundColor: colors.surface,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: spacing.xxl,
   },
   centered: {
     flex: 1,
@@ -827,22 +965,55 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.neutral,
   },
-  solicitudEnlace: {
-    fontSize: 12,
+  linkSection: {
+    marginTop: spacing.sm,
+  },
+  linkPressable: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    minHeight: layout.minTouchTarget,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.control,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceRaised,
+  },
+  linkPressableDisabled: {
+    opacity: 0.6,
+  },
+  linkText: {
+    fontSize: 16,
+    fontWeight: "600",
     color: colors.primary,
-    marginBottom: spacing.sm,
+  },
+  linkTextDisabled: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: colors.textSecondary,
+  },
+  linkErrorText: {
+    marginTop: spacing.xs,
+    fontSize: 12,
+    color: colors.danger,
+    textAlign: "center",
+  },
+  solicitudEnlace: {
+    marginTop: spacing.xs,
+    fontSize: 12,
+    color: colors.textSecondary,
+    textAlign: "center",
   },
   solicitudActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-    flexWrap: "wrap",
-    alignItems: "center",
+    flexDirection: "column",
+    gap: spacing.md,
+    marginTop: spacing.lg,
+    alignItems: "stretch",
   },
   solicitudActionBtn: {
-    minHeight: 36,
-    paddingHorizontal: spacing.md,
-    flex: 0,
+    width: "100%",
   },
   solicitudNoActions: {
     fontSize: 12,

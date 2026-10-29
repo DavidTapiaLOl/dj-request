@@ -1,6 +1,28 @@
 import * as React from "react";
-import { View, TextInput, StyleSheet, Text, KeyboardTypeOptions } from "react-native";
+import {
+  View,
+  TextInput,
+  StyleSheet,
+  Text,
+  KeyboardTypeOptions,
+  Platform,
+  StyleProp,
+  TextStyle,
+} from "react-native";
 import { colors, radius, spacing, typography } from "../theme/theme";
+
+interface WebAutofillStyle extends TextStyle {
+  WebkitTextFillColor?: string;
+  WebkitBoxShadow?: string;
+}
+
+const webAutofillStyle: WebAutofillStyle | undefined =
+  Platform.OS === "web"
+    ? {
+        WebkitTextFillColor: colors.textPrimary,
+        WebkitBoxShadow: `0 0 0 1000px ${colors.surfaceRaised} inset`,
+      }
+    : undefined;
 
 interface AppTextFieldProps {
   label: string;
@@ -18,7 +40,7 @@ interface AppTextFieldProps {
   placeholderTextColor?: string;
   helpText?: string;
   hasError?: boolean;
-  style?: any;
+  style?: StyleProp<TextStyle>;
 }
 
 export function AppTextField({
@@ -61,12 +83,14 @@ export function AppTextField({
         onBlur={handleBlur}
         secureTextEntry={secureTextEntry}
         placeholder={placeholder || label}
-        placeholderTextColor={placeholderTextColor}
+        placeholderTextColor={placeholderTextColor ?? colors.textSecondary}
         style={[
           styles.input,
           hasError && styles.inputError,
           focused && styles.inputFocused,
           style,
+          styles.inputTextColor,
+          webAutofillStyle,
         ]}
         autoComplete={autoComplete}
         autoCorrect={autoCorrect}
@@ -103,7 +127,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     fontSize: 16,
     backgroundColor: colors.surfaceRaised,
+    color: colors.textPrimary,
     fontFamily: "inherit",
+  },
+  inputTextColor: {
+    color: colors.textPrimary,
   },
   inputError: {
     borderColor: colors.danger,

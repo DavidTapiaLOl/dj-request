@@ -2,6 +2,7 @@ import * as React from "react";
 import {
   View,
   Text,
+  ScrollView,
   StyleSheet,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -231,67 +232,76 @@ export default function CreateScreen() {
     <ScreenContainer>
       <ScreenHeader showBack={true} />
 
-      <View style={styles.formContainer}>
-        <AppTextField
-          label="Nombre de la sala"
-          value={name}
-          onChange={(text) => {
-            setName(text);
-            if (nameError) setNameError(null);
-          }}
-          helpText="El nombre de la sala es obligatorio"
-          hasError={nameTouched && !!nameError}
-        />
-        {nameTouched && nameError && (
-          <Text style={styles.errorText}>{nameError}</Text>
-        )}
+      <View style={styles.scrollWrapper}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.formContainer}>
+            <AppTextField
+              label="Nombre de la sala"
+              value={name}
+              onChange={(text) => {
+                setName(text);
+                if (nameError) setNameError(null);
+              }}
+              helpText="El nombre de la sala es obligatorio"
+              hasError={nameTouched && !!nameError}
+            />
+            {nameTouched && nameError && (
+              <Text style={styles.errorText}>{nameError}</Text>
+            )}
 
-        <DateTimeField
-          label="Inicio del evento"
-          value={startsAtInput}
-          onChange={(v) => {
-            setStartsAtInput(v);
-            setStartsAtTouched(true);
-            if (startsAtError) setStartsAtError(null);
-          }}
-          hasError={startsAtTouched && !!startsAtError}
-        />
-        {startsAtTouched && startsAtError && (
-          <Text style={styles.errorText}>{startsAtError}</Text>
-        )}
+            <DateTimeField
+              label="Inicio del evento"
+              value={startsAtInput}
+              onChange={(v) => {
+                setStartsAtInput(v);
+                setStartsAtTouched(true);
+                if (startsAtError) setStartsAtError(null);
+              }}
+              hasError={startsAtTouched && !!startsAtError}
+            />
+            {startsAtTouched && startsAtError && (
+              <Text style={styles.errorText}>{startsAtError}</Text>
+            )}
 
-        <DateTimeField
-          label="Fin del evento"
-          value={endsAtInput}
-          onChange={(v) => {
-            setEndsAtInput(v);
-            setEndsAtTouched(true);
-            if (endsAtError) setEndsAtError(null);
-          }}
-          hasError={endsAtTouched && !!endsAtError}
-        />
-        {endsAtTouched && endsAtError && (
-          <Text style={styles.errorText}>{endsAtError}</Text>
-        )}
+            <DateTimeField
+              label="Fin del evento"
+              value={endsAtInput}
+              onChange={(v) => {
+                setEndsAtInput(v);
+                setEndsAtTouched(true);
+                if (endsAtError) setEndsAtError(null);
+              }}
+              hasError={endsAtTouched && !!endsAtError}
+            />
+            {endsAtTouched && endsAtError && (
+              <Text style={styles.errorText}>{endsAtError}</Text>
+            )}
 
-        <Text style={styles.zoneText}>
-          Las horas se interpretan en la zona de tu dispositivo
-        </Text>
+            <Text style={styles.zoneText}>
+              Las horas se interpretan en la zona de tu dispositivo
+            </Text>
 
-        <AppButton
-          title="Crear sala"
-          iconName="add"
-          onPress={onSubmit}
-          style={styles.createButton}
-          disabled={isSubmitting}
-        />
+            <AppButton
+              title="Crear sala"
+              iconName="add"
+              onPress={onSubmit}
+              style={styles.createButton}
+              disabled={isSubmitting}
+            />
+
+            {generalError && (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{generalError}</Text>
+              </View>
+            )}
+          </View>
+        </ScrollView>
       </View>
-
-      {generalError && (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorText}>{generalError}</Text>
-        </View>
-      )}
     </ScreenContainer>
   );
 }
@@ -299,8 +309,19 @@ export default function CreateScreen() {
 const styles = StyleSheet.create({
   formContainer: {
     width: "100%",
-    maxWidth: 360,
-    // backgroundColor transparente (hereda del ScreenContainer)
+    maxWidth: 400,
+  },
+  scrollWrapper: {
+    flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingBottom: spacing.xxl,
   },
   errorText: {
     fontSize: 12,

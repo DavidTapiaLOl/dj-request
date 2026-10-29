@@ -95,6 +95,51 @@ public class RoomOptionsValidationTests
         Assert.True(result.Succeeded);
     }
 
+    [Theory]
+    [InlineData("http://192.168.68.107:4200")]
+    [InlineData("http://10.0.0.12:3000")]
+    [InlineData("http://172.16.0.1:4200")]
+    [InlineData("http://172.31.255.254:4200")]
+    public void FrontendUrl_HttpPrivateLan_WithAllowHttpLan_SucceedsInDevelopment(string url)
+    {
+        var result = CreateValidator("Development").Validate(
+            Options.DefaultName,
+            new FrontendUrlOptions { BaseUrl = url, AllowHttpLan = true });
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void FrontendUrl_HttpLanWithoutAllowHttpLan_FailsInDevelopment()
+    {
+        var result = CreateValidator("Development").Validate(
+            Options.DefaultName,
+            new FrontendUrlOptions { BaseUrl = "http://192.168.68.107:4200" });
+        Assert.True(result.Failed);
+    }
+
+    [Theory]
+    [InlineData("http://8.8.8.8:4200")]
+    [InlineData("http://172.32.0.1:4200")]
+    [InlineData("http://172.15.255.254:4200")]
+    [InlineData("http://[fd00::1]:4200")]
+    [InlineData("http://mi-pc.local:4200")]
+    public void FrontendUrl_HttpNonPrivateLan_WithAllowHttpLan_FailsInDevelopment(string url)
+    {
+        var result = CreateValidator("Development").Validate(
+            Options.DefaultName,
+            new FrontendUrlOptions { BaseUrl = url, AllowHttpLan = true });
+        Assert.True(result.Failed);
+    }
+
+    [Fact]
+    public void FrontendUrl_HttpPrivateLanWithAllowHttpLan_FailsOutsideDevelopment()
+    {
+        var result = CreateValidator("Production").Validate(
+            Options.DefaultName,
+            new FrontendUrlOptions { BaseUrl = "http://192.168.68.107:4200", AllowHttpLan = true });
+        Assert.True(result.Failed);
+    }
+
     [Fact]
     public void TimeZone_InvalidIana_ThrowsValidationException()
     {

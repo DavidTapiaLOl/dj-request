@@ -90,7 +90,7 @@ Alineado con los contratos reales (`estado` ∈ `abierta`/`pausada`/`cerrada`, m
 - **Web de invitados (`web/`, Angular)**: prioridad de ancho de teléfono, misma identidad visual, invitados sin registro; nunca exponer playlists ni datos privados en la interfaz.
 - **Escritorio administrativo (`desktop/`, Electron+Angular)**: tablas y densidad de información, aprovechar pantalla ancha, no estirar el diseño móvil; mostrar solo funciones realmente implementadas.
 
-Estado actual: `mobile/` existe; `web/` y `desktop/` están vacías. Estas reglas se aplican cuando cada aplicación se cree.
+Estado actual: `mobile/` existe; `web/` ya tiene la primera versión de la web de invitados (Angular); `desktop/` está vacía. Estas reglas se aplican cuando cada aplicación se cree.
 
 ## 8. Accesibilidad
 

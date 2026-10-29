@@ -42,6 +42,8 @@ export default function DateTimeField({ label, value, onChange, hasError }: Date
           fontSize: 16,
           backgroundColor: colors.surfaceRaised,
           color: colors.textPrimary,
+          WebkitTextFillColor: colors.textPrimary,
+          WebkitBoxShadow: `0 0 0 1000px ${colors.surfaceRaised} inset`,
           boxSizing: "border-box",
           fontFamily: "inherit",
           colorScheme: "dark",
@@ -56,7 +58,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#374151",
+    color: colors.textSecondary,
     marginBottom: 6,
   },
 });

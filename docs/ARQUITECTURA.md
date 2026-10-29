@@ -2,7 +2,7 @@
 
 ## Estado comprobado en Windows
 Node 22.22.0; npm 10.9.4; OpenCode 1.18.32; .NET SDK 10.0.401. Docker Engine 27.0.3 y Compose 2.28.1. Contenedor postgres:17 healthy. Base dj_requests, usuario administrador local dj_admin. Acceso host 127.0.0.1:5433, contenedor postgres:5432. Nunca incluir contraseña real en documentación.
-global.json y carpetas backend, mobile, web, desktop, infrastructure, docs ya existen. compose.yaml y .env están en raíz. No reemplazarlos sin inspección. Angular aún no creado; verificar requisitos de Node al escoger versión, no asumir que cualquier versión funciona con Node instalado.
+global.json y carpetas backend, mobile, web, desktop, infrastructure, docs ya existen. compose.yaml y .env están en raíz. No reemplazarlos sin inspección. Angular 21.2 ya creado en `web/` (web de invitados, con Node 22.22.0); `desktop/` aún no creado.
 
 ## Componentes
 Todos los clientes hablan con la API mediante HTTPS. Solo backend y tareas operativas autorizadas acceden a PostgreSQL. QR contiene URL del sitio y código de invitación, nunca credenciales del DJ. Código permite entrar a una sala, no administrar.
