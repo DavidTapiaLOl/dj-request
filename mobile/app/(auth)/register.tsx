@@ -1,11 +1,14 @@
 import * as React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/provider";
 import { AppButton } from "@/components/AppButton";
 import { AppTextField } from "@/components/AppTextField";
 import { AuthScreenContainer } from "@/components/AuthScreenContainer";
-import { colors, spacing } from "@/theme/theme";
+import { AuthBrand } from "@/components/BrandLogo";
+import { FadeInView } from "@/components/FadeInView";
+import { ScreenHeader } from "@/components/ScreenHeader";
+import { colors, spacing, typography } from "@/theme/theme";
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -65,17 +68,22 @@ export default function RegisterScreen() {
 
     try {
       setIsSubmitting(true);
+      setErrorRed(null);
       await register(email, password, artistName);
       router.replace("/(app)");
     } catch (err: any) {
       if (err instanceof Error && err.message.includes("Network error")) {
-        setErrorRed("No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
+        setErrorRed(
+          "No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo."
+        );
       } else if (err.status === 409) {
         setErrorRed("El correo ya está registrado");
       } else if (err.status === 400) {
         setErrorRed(err.message || "Datos inválidos. Revisa los campos.");
       } else {
-        setErrorRed(err.message || "No se pudo crear la cuenta. Intenta de nuevo.");
+        setErrorRed(
+          err.message || "No se pudo crear la cuenta. Intenta de nuevo."
+        );
       }
     } finally {
       setIsSubmitting(false);
@@ -102,92 +110,120 @@ export default function RegisterScreen() {
   };
 
   return (
-    <AuthScreenContainer>
-      <AppTextField
-        label="Nombre artístico"
-        value={artistName}
-        onChangeText={(text) => {
-          setArtistName(text);
-          if (nameError) setNameError(null);
-        }}
-        onBlur={onNameBlur}
-        placeholder="Tu nombre artístico"
-        placeholderTextColor={colors.textSecondary}
-        hasError={nameTouched && !!nameError}
-      />
-      {nameTouched && nameError && (
-        <Text style={styles.errorText}>{nameError}</Text>
-      )}
+    <AuthScreenContainer contentContainerStyle={styles.screenContent}>
+      <FadeInView>
+        <ScreenHeader showBack />
 
-      <AppTextField
-        label="Correo electrónico"
-        value={email}
-        onChangeText={(text) => {
-          setEmail(text);
-          if (emailError) setEmailError(null);
-        }}
-        onBlur={onEmailBlur}
-        autoComplete="email"
-        keyboardType="email-address"
-        placeholder="tu@correo.com"
-        placeholderTextColor={colors.textSecondary}
-        hasError={emailTouched && !!emailError}
-      />
-      {emailTouched && emailError && (
-        <Text style={styles.errorText}>{emailError}</Text>
-      )}
-
-      <AppTextField
-        label="Contraseña"
-        value={password}
-        onChangeText={(text) => {
-          setPassword(text);
-          if (passwordError) setPasswordError(null);
-        }}
-        onBlur={onPasswordBlur}
-        secureTextEntry={true}
-        autoComplete="new-password"
-        placeholder="Mínimo 12 caracteres"
-        placeholderTextColor={colors.textSecondary}
-        helpText="Mínimo 12 caracteres"
-        hasError={passwordTouched && !!passwordError}
-      />
-      {passwordTouched && passwordError && (
-        <Text style={styles.errorText}>{passwordError}</Text>
-      )}
-
-      {errorRed && (
-        <View style={styles.errorRedBanner}>
-          <Text style={styles.errorRedText}>{errorRed}</Text>
-        </View>
-      )}
-
-      <AppButton
-        title="Crear cuenta"
-        onPress={onSubmit}
-        variant="primary"
-        loading={isSubmitting}
-        disabled={isSubmitting}
-        style={styles.submitButton}
-      />
-
-      <View style={styles.linkContainer}>
-        <Text style={styles.linkText}>
-          ¿Ya tienes cuenta?{" "}
-          <Text style={styles.link} onPress={() => router.push("/(auth)/login")}>
-            Inicia sesión
+        <View style={styles.hero}>
+          <AuthBrand />
+          <Text style={styles.title}>Crea tu cuenta</Text>
+          <Text style={styles.subtitle}>
+            Empieza a recibir peticiones en tus eventos
           </Text>
-        </Text>
-      </View>
+        </View>
+
+        <AppTextField
+          label="Nombre artístico"
+          value={artistName}
+          onChangeText={(text) => {
+            setArtistName(text);
+            if (nameError) setNameError(null);
+          }}
+          onBlur={onNameBlur}
+          autoComplete="name"
+          placeholder="Tu nombre artístico"
+          placeholderTextColor={colors.textSecondary}
+          hasError={nameTouched && !!nameError}
+          errorText={nameTouched ? nameError : null}
+        />
+
+        <AppTextField
+          label="Correo electrónico"
+          value={email}
+          onChangeText={(text) => {
+            setEmail(text);
+            if (emailError) setEmailError(null);
+          }}
+          onBlur={onEmailBlur}
+          autoComplete="email"
+          autoCapitalize="none"
+          keyboardType="email-address"
+          placeholder="tu@correo.com"
+          placeholderTextColor={colors.textSecondary}
+          hasError={emailTouched && !!emailError}
+          errorText={emailTouched ? emailError : null}
+        />
+
+        <AppTextField
+          label="Contraseña"
+          value={password}
+          onChangeText={(text) => {
+            setPassword(text);
+            if (passwordError) setPasswordError(null);
+          }}
+          onBlur={onPasswordBlur}
+          secureTextEntry
+          showPasswordToggle
+          autoComplete="new-password"
+          autoCapitalize="none"
+          placeholder="Mínimo 12 caracteres"
+          placeholderTextColor={colors.textSecondary}
+          helpText="Mínimo 12 caracteres"
+          hasError={passwordTouched && !!passwordError}
+          errorText={passwordTouched ? passwordError : null}
+        />
+
+        {errorRed && (
+          <View style={styles.errorRedBanner}>
+            <Text style={styles.errorRedText}>{errorRed}</Text>
+          </View>
+        )}
+
+        <AppButton
+          title="Crear cuenta"
+          onPress={onSubmit}
+          variant="primary"
+          loading={isSubmitting}
+          disabled={isSubmitting}
+          style={styles.submitButton}
+        />
+
+        <Pressable
+          onPress={() => router.push("/(auth)/login")}
+          accessibilityRole="link"
+          accessibilityLabel="Iniciar sesión"
+          style={styles.linkContainer}
+        >
+          <Text style={styles.linkText}>
+            ¿Ya tienes cuenta?{" "}
+            <Text style={styles.link}>Iniciar sesión</Text>
+          </Text>
+        </Pressable>
+      </FadeInView>
     </AuthScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  errorText: {
-    color: colors.danger,
-    fontSize: 12,
-    marginBottom: spacing.sm,
+  screenContent: {
+    justifyContent: "flex-start",
+  },
+  hero: {
+    alignItems: "center",
+    marginTop: spacing.lg,
+    marginBottom: spacing.xxl,
+  },
+  title: {
+    ...typography.title,
+    color: colors.textPrimary,
+    textAlign: "center",
+    marginTop: spacing.xl,
+  },
+  subtitle: {
+    ...typography.body,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginTop: spacing.sm,
   },
   errorRedBanner: {
     padding: spacing.md,
@@ -195,8 +231,7 @@ const styles = StyleSheet.create({
     borderColor: colors.danger,
     borderWidth: 1,
     borderRadius: 12,
-    marginTop: spacing.sm,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.md,
   },
   errorRedText: {
     color: colors.danger,
@@ -205,15 +240,18 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     width: "100%",
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
   },
   linkContainer: {
     marginTop: spacing.xl,
+    minHeight: 48,
+    justifyContent: "center",
     alignItems: "center",
   },
   linkText: {
     color: colors.textSecondary,
     fontSize: 14,
+    textAlign: "center",
   },
   link: {
     color: colors.primary,

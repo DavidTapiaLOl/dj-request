@@ -59,6 +59,17 @@ a {
   outline-offset: 2px;
 }
 
+.button:active:not(:disabled) {
+  transform: scale(0.98);
+  transition: transform 120ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button:active:not(:disabled) {
+    transition: none;
+  }
+}
+
 .panel {
   background: var(--djr-surface);
   border: 1px solid var(--djr-border);

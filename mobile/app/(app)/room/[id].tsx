@@ -20,6 +20,7 @@ import QRCode from "react-native-qrcode-svg";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { AppButton } from "@/components/AppButton";
+import { FadeInView } from "@/components/FadeInView";
 import { colors, layout, radius, spacing, typography } from "@/theme/theme";
 
 const UUID_REGEX =
@@ -40,9 +41,11 @@ function isAbsoluteHttpUrl(value: string): boolean {
 
 const linkAnchorStyle: React.CSSProperties = {
   display: "flex",
+  flexDirection: "row",
   alignItems: "center",
   justifyContent: "center",
   gap: spacing.sm,
+  width: "100%",
   minHeight: layout.minTouchTarget,
   paddingLeft: spacing.lg,
   paddingRight: spacing.lg,
@@ -50,7 +53,7 @@ const linkAnchorStyle: React.CSSProperties = {
   paddingBottom: spacing.md,
   border: `1px solid ${colors.border}`,
   borderRadius: radius.control,
-  backgroundColor: colors.surfaceRaised,
+  backgroundColor: colors.surface,
   textDecoration: "none",
   boxSizing: "border-box",
 };
@@ -107,6 +110,7 @@ export default function RoomDetailScreen() {
   const [isSaving, setIsSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [shareMessage, setShareMessage] = React.useState<string | null>(null);
+  const [showManualLink, setShowManualLink] = React.useState(false);
   const [confirmClose, setConfirmClose] = React.useState(false);
   const conflictReloadRef = React.useRef(false);
 
@@ -299,6 +303,7 @@ export default function RoomDetailScreen() {
     if (!room) return;
 
     setShareMessage(null);
+    setShowManualLink(false);
     const message = `Únete a la sala "${room.nombre}" con el código ${room.codigo}: ${room.inviteUrl}`;
 
     try {
@@ -321,6 +326,7 @@ export default function RoomDetailScreen() {
           return;
         }
 
+        setShowManualLink(true);
         setShareMessage(
           "Este navegador no puede compartir ni copiar automáticamente. Selecciona el enlace de abajo y cópialo manualmente."
         );
@@ -329,6 +335,7 @@ export default function RoomDetailScreen() {
 
       await Share.share({ message, url: room.inviteUrl });
     } catch {
+      setShowManualLink(true);
       setShareMessage(
         "No se pudo compartir ni copiar automáticamente. Selecciona el enlace de abajo y cópialo manualmente."
       );
@@ -391,148 +398,174 @@ export default function RoomDetailScreen() {
   const canModify = !roomSafe.hasEnded && !isSaving;
 
   const schedule = formatRoomSchedule(roomSafe.startsAt, roomSafe.endsAt, roomSafe.timezone);
+  const scheduleLabel = schedule
+    ? [schedule.primary, schedule.secondary].filter(Boolean).join(" – ")
+    : null;
 
-return (
+  return (
     <ScreenContainer>
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-      <ScreenHeader showBack={true} />
-
-      {/* Nombre complete in its own row */}
-      <View style={styles.nombreRow}>
-        <Text style={styles.nombreText}>{roomSafe.nombre}</Text>
-      </View>
-
-      {/* Etiqueta de estado debajo */}
-      <View style={styles.estadoRow}>
-        <StatusBadge estado={roomSafe.estado} hasEnded={roomSafe.hasEnded} />
-      </View>
-
-      {/* Código de acceso */}
-      <View style={styles.codigoBlock}>
-        <Text style={styles.codigoLabel}>Código de acceso</Text>
-        <Text style={styles.codigoValue}>{roomSafe.codigo}</Text>
-      </View>
-
-      {/* Fecha, horario y zona */}
-      {schedule ? (
-        <View style={styles.scheduleSection}>
-          <View style={styles.schedule}>
-            <View style={styles.scheduleRow}>
-              <Ionicons name="calendar-outline" size={15} color={colors.textSecondary} />
-              <Text style={styles.scheduleText}>{schedule.primary}</Text>
-            </View>
-            {schedule.secondary ? (
-              <View style={styles.scheduleRow}>
-                <Ionicons name="calendar-outline" size={15} color={colors.textSecondary} />
-                <Text style={styles.scheduleText}>{schedule.secondary}</Text>
-              </View>
-            ) : null}
-            {schedule.timeZone && (
-              <Text style={styles.timeZone}>Zona horaria: {schedule.timeZone}</Text>
-            )}
+      <ScreenHeader showBack showBrand />
+      <FadeInView style={styles.fade}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.nombreRow}>
+            <Text style={styles.nombreText}>{roomSafe.nombre}</Text>
           </View>
+
+          <View style={styles.estadoRow}>
+            <StatusBadge estado={roomSafe.estado} hasEnded={roomSafe.hasEnded} />
+          </View>
+
+          {scheduleLabel ? (
+            <View style={styles.scheduleSection}>
+              <View style={styles.scheduleRow}>
+                <Ionicons
+                  name="calendar-outline"
+                  size={16}
+                  color={colors.textSecondary}
+                />
+                <Text style={styles.scheduleText}>{scheduleLabel}</Text>
+              </View>
+            </View>
+          ) : null}
+
+      <View style={styles.inviteCard}>
+        <Text style={styles.inviteTitle}>Invita a tu público</Text>
+
+        <View style={styles.codigoBlock}>
+          <Text style={styles.codigoLabel}>Código de acceso</Text>
+          <Text style={styles.codigoValue}>{roomSafe.codigo}</Text>
         </View>
-      ) : null}
 
-      {/* Acciones de estado */}
-      {!confirmClose && (
-        <View style={styles.actions}>
-          {roomSafe.estado === "abierta" && (
-            <>
-              <AppButton
-                title={isSaving ? "Guardando…" : "Pausar"}
-                onPress={() => handleStateChange("pausada")}
-                disabled={!canModify}
-                variant="secondary"
-              />
-              <AppButton
-                title="Cerrar"
-                onPress={handleClose}
-                variant="danger"
-                disabled={!canModify}
-              />
-            </>
-          )}
+        <View style={styles.qrFrame}>
+          <QRCode
+            value={roomSafe.inviteUrl}
+            size={120}
+            color="#000000"
+            backgroundColor="#ffffff"
+          />
+        </View>
 
-          {roomSafe.estado === "pausada" && (
-            <>
+        <AppButton
+          title="Compartir enlace"
+          onPress={handleShare}
+          variant="outline"
+          iconName="share-social-outline"
+          style={styles.shareButton}
+        />
+        {shareMessage ? (
+          <Text style={styles.webNote}>{shareMessage}</Text>
+        ) : null}
+        {showManualLink ? (
+          <Text style={styles.inviteUrl} selectable>
+            {roomSafe.inviteUrl}
+          </Text>
+        ) : null}
+
+        {!confirmClose && (
+          <View style={styles.actions}>
+            {roomSafe.estado === "abierta" && (
+              <>
+                <AppButton
+                  title={isSaving ? "Guardando…" : "Pausar"}
+                  onPress={() => handleStateChange("pausada")}
+                  disabled={!canModify}
+                  variant="secondary"
+                  style={styles.stateActionButton}
+                />
+                <AppButton
+                  title="Cerrar"
+                  onPress={handleClose}
+                  variant="danger"
+                  disabled={!canModify}
+                  style={styles.stateActionButton}
+                />
+              </>
+            )}
+
+            {roomSafe.estado === "pausada" && (
+              <>
+                <AppButton
+                  title={isSaving ? "Guardando…" : "Reabrir"}
+                  onPress={() => handleStateChange("abierta")}
+                  disabled={!canModify}
+                  variant="secondary"
+                  style={styles.stateActionButton}
+                />
+                <AppButton
+                  title="Cerrar"
+                  onPress={handleClose}
+                  variant="danger"
+                  disabled={!canModify}
+                  style={styles.stateActionButton}
+                />
+              </>
+            )}
+
+            {roomSafe.estado === "cerrada" && (
               <AppButton
-                title={isSaving ? "Guardando…" : "Reabrir"}
+                title={isSaving ? "Guardando…" : "Reactivar"}
                 onPress={() => handleStateChange("abierta")}
                 disabled={!canModify}
-                variant="secondary"
+                style={styles.stateActionButton}
+              />
+            )}
+          </View>
+        )}
+
+        {confirmClose && (
+          <View style={styles.confirmBox}>
+            <Text style={styles.confirmText}>
+              ¿Seguro que quieres cerrar esta sala? Los invitados ya no podrán enviar peticiones.
+            </Text>
+            <View style={styles.confirmActions}>
+              <AppButton
+                title="Confirmar cierre"
+                onPress={() => handleStateChange("cerrada")}
+                variant="danger"
+                disabled={isSaving}
+                style={styles.stateActionButton}
               />
               <AppButton
-                title="Cerrar"
-                onPress={handleClose}
-                variant="danger"
-                disabled={!canModify}
+                title="Cancelar"
+                onPress={() => setConfirmClose(false)}
+                disabled={isSaving}
+                style={styles.stateActionButton}
               />
-            </>
-          )}
-
-          {roomSafe.estado === "cerrada" && (
-            <AppButton
-              title={isSaving ? "Guardando…" : "Reactivar"}
-              onPress={() => handleStateChange("abierta")}
-              disabled={!canModify}
-            />
-          )}
-        </View>
-      )}
-
-      {confirmClose && (
-        <View style={styles.confirmBox}>
-          <Text style={styles.confirmText}>
-            ¿Seguro que quieres cerrar esta sala? Los invitados ya no podrán enviar peticiones.
-          </Text>
-          <View style={styles.confirmActions}>
-            <AppButton
-              title="Confirmar cierre"
-              onPress={() => handleStateChange("cerrada")}
-              variant="danger"
-              disabled={isSaving}
-            />
-            <AppButton
-              title="Cancelar"
-              onPress={() => setConfirmClose(false)}
-              disabled={isSaving}
-            />
+            </View>
           </View>
-        </View>
-      )}
-
-      {/* Compartir */}
-      <View style={styles.shareSection}>
-        <View style={{ marginBottom: spacing.xl, alignItems: "center" }}>
-          <QRCode value={roomSafe.inviteUrl} size={150} color="#000000" backgroundColor="#ffffff" />
-        </View>
-        <Text style={styles.inviteUrl} selectable>
-          {roomSafe.inviteUrl}
-        </Text>
-        <AppButton title="Compartir enlace" onPress={handleShare} variant="secondary" style={{ marginBottom: spacing.lg }} />
-        {shareMessage ? <Text style={styles.webNote}>{shareMessage}</Text> : null}
-        <Text style={styles.webNote}>
-          También puedes dictar el código de acceso o dejar que escaneen el QR.
-        </Text>
+        )}
       </View>
 
       {/* Sección de solicitudes */}
       <View style={styles.solicitudesSection}>
         <View style={styles.solicitudesHeader}>
           <Text style={styles.solicitudesTitle}>Solicitudes</Text>
-          <AppButton
-            title="Actualizar"
+          <Pressable
             onPress={handleRefreshSolicitudes}
-            variant="secondary"
-            iconName="refresh-outline"
             disabled={solicitudesLoading}
-            style={styles.refreshButton}
-          />
+            accessibilityRole="button"
+            accessibilityLabel="Actualizar solicitudes"
+            accessibilityState={{ disabled: solicitudesLoading }}
+            style={({ pressed }) => [
+              styles.refreshButton,
+              pressed && styles.refreshButtonPressed,
+            ]}
+          >
+            {solicitudesLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Ionicons
+                name="refresh-outline"
+                size={20}
+                color={colors.textSecondary}
+              />
+            )}
+          </Pressable>
         </View>
 
         {solicitudesError && (
@@ -559,70 +592,54 @@ return (
               return (
                 <View key={s.id} style={styles.solicitudCard}>
                   <View style={styles.solicitudTopRow}>
-                    <Text style={styles.solicitudNombre} numberOfLines={2}>{s.nombre}</Text>
+                    <Text style={styles.solicitudNombre}>{s.nombre}</Text>
                     <SolicitudBadge estado={s.estado} />
                   </View>
 
-                  {(s.artista || s.generoNombre) && (
-                    <View style={styles.solicitudMetaRow}>
-                      {s.artista && (
-                        <Text style={styles.solicitudMeta}>{s.artista}</Text>
-                      )}
-                      {s.artista && s.generoNombre && (
-                        <Text style={styles.solicitudMetaDot}>·</Text>
-                      )}
-                      {s.generoNombre && (
-                        <Text style={styles.solicitudMeta}>{s.generoNombre}</Text>
-                      )}
-                    </View>
-                  )}
+                  {s.artista ? (
+                    <Text style={styles.solicitudMeta}>{s.artista}</Text>
+                  ) : null}
 
-                  {enlace ? (
+                  {enlaceValido ? (
                     <View style={styles.linkSection}>
                       {Platform.OS === "web" ? (
-                        enlaceValido ? (
-                          <a
-                            href={enlace}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label={`Abrir canción: ${enlace}`}
-                            style={linkAnchorStyle}
-                          >
-                            <Ionicons name="link-outline" size={16} color={colors.primary} />
-                            <Text style={styles.linkText}>Abrir canción</Text>
-                          </a>
-                        ) : (
-                          <View style={[styles.linkPressable, styles.linkPressableDisabled]}>
-                            <Ionicons name="link-outline" size={16} color={colors.textSecondary} />
-                            <Text style={styles.linkTextDisabled}>Abrir canción</Text>
-                          </View>
-                        )
-                      ) : (
-                        <Pressable
-                          onPress={() => handleOpenEnlace(s.id, enlace)}
-                          disabled={!enlaceValido}
-                          accessibilityRole="link"
-                          accessibilityLabel={`Abrir canción: ${enlace}`}
-                          accessibilityState={{ disabled: !enlaceValido }}
-                          style={[styles.linkPressable, !enlaceValido && styles.linkPressableDisabled]}
+                        <a
+                          href={enlace!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`Abrir canción: ${enlace}`}
+                          style={linkAnchorStyle}
                         >
                           <Ionicons
                             name="link-outline"
                             size={16}
-                            color={enlaceValido ? colors.primary : colors.textSecondary}
+                            color={colors.primary}
                           />
-                          <Text style={enlaceValido ? styles.linkText : styles.linkTextDisabled}>
-                            Abrir canción
-                          </Text>
+                          <Text style={styles.linkText}>Abrir canción</Text>
+                        </a>
+                      ) : (
+                        <Pressable
+                          onPress={() => handleOpenEnlace(s.id, enlace!)}
+                          accessibilityRole="link"
+                          accessibilityLabel={`Abrir canción: ${enlace}`}
+                          style={({ pressed }) => [
+                            styles.linkPressable,
+                            pressed && styles.linkPressablePressed,
+                          ]}
+                        >
+                          <Ionicons
+                            name="link-outline"
+                            size={16}
+                            color={colors.primary}
+                          />
+                          <Text style={styles.linkText}>Abrir canción</Text>
                         </Pressable>
                       )}
-                      <Text style={styles.solicitudEnlace} numberOfLines={2}>{enlace}</Text>
-                      {!enlaceValido && (
-                        <Text style={styles.linkErrorText}>URL no válida</Text>
-                      )}
-                      {linkError?.id === s.id && (
-                        <Text style={styles.linkErrorText}>{linkError.message}</Text>
-                      )}
+                      {linkError?.id === s.id ? (
+                        <Text style={styles.linkErrorText}>
+                          {linkError.message}
+                        </Text>
+                      ) : null}
                     </View>
                   ) : null}
 
@@ -650,7 +667,7 @@ return (
                     {s.estado === "aceptada" && (
                       <>
                         <AppButton
-                          title="Marcar como reproducida"
+                          title="Marcar reproducida"
                           onPress={() => handleSolicitudAction(s, "reproducida")}
                           variant="primary"
                           disabled={actionLoadingId !== null}
@@ -692,12 +709,16 @@ return (
           </>
         )}
       </View>
-      </ScrollView>
+        </ScrollView>
+      </FadeInView>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  fade: {
+    flex: 1,
+  },
   container: {
     flexGrow: 1,
     padding: spacing.lg,
@@ -708,6 +729,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingTop: spacing.sm,
     paddingBottom: spacing.xxl,
   },
   centered: {
@@ -737,7 +759,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   schedule: {
-    marginBottom: spacing.lg,
+    gap: spacing.xs,
   },
   scheduleRow: {
     flexDirection: "row",
@@ -775,21 +797,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   actions: {
+    width: "100%",
     flexDirection: "row",
+    alignItems: "stretch",
     gap: spacing.sm,
-    marginBottom: spacing.lg,
+    marginTop: spacing.lg,
     flexWrap: "wrap",
   },
+  stateActionButton: {
+    flexGrow: 1,
+    flexBasis: 120,
+  },
   confirmBox: {
+    width: "100%",
+    marginTop: spacing.lg,
     padding: spacing.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
     borderRadius: radius.control,
-    marginBottom: spacing.lg,
   },
   confirmText: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.md,
   },
   confirmActions: {
     flexDirection: "row",
@@ -811,10 +842,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   inviteUrl: {
-    fontSize: 13,
+    fontSize: 12,
+    lineHeight: 18,
     color: colors.textSecondary,
     textAlign: "center",
-    marginBottom: spacing.sm,
+    marginTop: spacing.md,
   },
   webNote: {
     marginTop: spacing.sm,
@@ -840,9 +872,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   nombreText: {
-    ...typography.cardTitle,
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: "700",
     color: colors.textPrimary,
-    fontWeight: "600",
     flexShrink: 1,
     minWidth: 0,
   },
@@ -853,22 +886,54 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   codigoBlock: {
+    width: "100%",
     backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
     borderRadius: radius.control,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    alignItems: "center",
   },
   codigoLabel: {
-    ...typography.caption,
+    fontSize: 12,
     color: colors.textSecondary,
     marginBottom: spacing.xs,
   },
   codigoValue: {
-    ...typography.caption,
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: "700",
+    letterSpacing: 2,
     color: colors.textPrimary,
   },
   scheduleSection: {
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  inviteCard: {
+    alignItems: "center",
+    marginTop: spacing.sm,
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+  },
+  inviteTitle: {
+    alignSelf: "flex-start",
+    ...typography.cardTitle,
+    color: colors.textPrimary,
+  },
+  qrFrame: {
+    marginTop: spacing.md,
+    padding: spacing.sm,
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.control,
+  },
+  shareButton: {
+    width: "100%",
+    marginTop: spacing.lg,
   },
   shareSection: {
     flexDirection: "column",
@@ -895,8 +960,14 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   refreshButton: {
-    minHeight: 36,
-    paddingHorizontal: spacing.md,
+    width: layout.minTouchTarget,
+    height: layout.minTouchTarget,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.control,
+  },
+  refreshButtonPressed: {
+    backgroundColor: colors.surfaceRaised,
   },
   solicitudesErrorBanner: {
     padding: spacing.md,
@@ -922,9 +993,11 @@ const styles = StyleSheet.create({
   },
   solicitudCard: {
     backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
     borderRadius: radius.control,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
   solicitudTopRow: {
     flexDirection: "row",
@@ -939,6 +1012,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     flex: 1,
     minWidth: 0,
+    flexWrap: "wrap",
   },
   solicitudBadge: {
     paddingHorizontal: spacing.sm,
@@ -946,6 +1020,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     minWidth: 80,
     alignItems: "center",
+    flexShrink: 0,
   },
   solicitudBadgeText: {
     fontSize: 11,
@@ -958,15 +1033,17 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   solicitudMeta: {
-    fontSize: 13,
+    fontSize: 14,
+    lineHeight: 20,
     color: colors.textSecondary,
+    marginTop: spacing.xs,
   },
   solicitudMetaDot: {
     fontSize: 13,
     color: colors.neutral,
   },
   linkSection: {
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
   },
   linkPressable: {
     flexDirection: "row",
@@ -979,7 +1056,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.control,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.surfaceRaised,
+    backgroundColor: colors.surface,
+  },
+  linkPressablePressed: {
+    borderColor: colors.primary,
   },
   linkPressableDisabled: {
     opacity: 0.6,

@@ -12,6 +12,7 @@ import DateTimePicker, {
   DateTimePickerAndroid,
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
+import { Ionicons } from "@expo/vector-icons";
 import type { DateTimeFieldProps } from "./types";
 import { colors, radius, spacing } from "../../theme/theme";
 
@@ -59,7 +60,13 @@ function mergeDateAndTime(datePart: Date, timePart: Date): Date {
   );
 }
 
-export default function DateTimeField({ label, value, onChange, hasError }: DateTimeFieldProps) {
+export default function DateTimeField({
+  label,
+  value,
+  onChange,
+  hasError,
+  labelPosition = "above",
+}: DateTimeFieldProps) {
   const [iosVisible, setIosVisible] = React.useState(false);
   const [iosDate, setIosDate] = React.useState<Date>(() => initialDate(value));
 
@@ -108,16 +115,38 @@ export default function DateTimeField({ label, value, onChange, hasError }: Date
 
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+      {labelPosition === "above" ? (
+        <Text style={styles.label}>{label}</Text>
+      ) : null}
 
       <TouchableOpacity
-        style={[styles.picker, hasError && styles.pickerError]}
+        style={[
+          styles.picker,
+          labelPosition === "inside" && styles.pickerInside,
+          hasError && styles.pickerError,
+        ]}
         onPress={open}
         activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}${value ? `: ${value}` : ""}`}
       >
-        <Text style={[styles.valueText, !value && styles.placeholder]}>
-          {value || "AAAA-MM-DD HH:mm"}
-        </Text>
+        {labelPosition === "inside" ? (
+          <View style={styles.innerText}>
+            <Text style={styles.innerLabel}>{label}</Text>
+            <Text style={[styles.valueText, !value && styles.placeholder]}>
+              {value || "Selecciona fecha y hora"}
+            </Text>
+          </View>
+        ) : (
+          <Text style={[styles.valueText, !value && styles.placeholder]}>
+            {value || "Selecciona fecha y hora"}
+          </Text>
+        )}
+        <Ionicons
+          name="calendar-outline"
+          size={20}
+          color={colors.textSecondary}
+        />
       </TouchableOpacity>
 
       {Platform.OS === "ios" && (
@@ -151,28 +180,48 @@ export default function DateTimeField({ label, value, onChange, hasError }: Date
 }
 
 const styles = StyleSheet.create({
-  field: { marginBottom: 12 },
+  field: { marginBottom: spacing.lg },
   label: {
     fontSize: 14,
     fontWeight: "500",
     color: colors.textSecondary,
-    marginBottom: 6,
+    marginBottom: spacing.sm,
   },
   picker: {
     width: "100%",
-    height: 48,
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
     borderWidth: 1,
     borderRadius: radius.control,
     paddingHorizontal: spacing.lg,
-    justifyContent: "center",
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
+  },
+  pickerInside: {
+    minHeight: 62,
+    alignItems: "center",
+    paddingVertical: spacing.sm,
   },
   pickerError: {
     borderColor: colors.danger,
   },
+  innerText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  innerLabel: {
+    fontSize: 12,
+    fontWeight: "400",
+    color: colors.textSecondary,
+    marginBottom: 2,
+  },
   valueText: {
+    flexShrink: 1,
     fontSize: 16,
+    fontWeight: "400",
     color: colors.textPrimary,
   },
   placeholder: {
@@ -181,33 +230,34 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: "rgba(0,0,0,0.6)",
   },
   modalContent: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
-    paddingBottom: 20,
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.card,
+    borderTopRightRadius: radius.card,
+    paddingBottom: spacing.xl,
   },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 14,
+    padding: spacing.lg,
     borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
+    borderBottomColor: colors.border,
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: "600",
+    color: colors.textPrimary,
   },
   modalCancel: {
     fontSize: 16,
-    color: "#6b7280",
+    color: colors.textSecondary,
   },
   modalConfirm: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#8a2be2",
+    color: colors.primary,
   },
 });

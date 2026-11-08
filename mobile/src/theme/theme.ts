@@ -1,4 +1,4 @@
-import { TextStyle } from "react-native";
+import { Platform, TextStyle } from "react-native";
 
 export const colors = {
   background: "#0B0D12",
@@ -8,6 +8,7 @@ export const colors = {
   primary: "#8B5CF6",
   primaryPressed: "#7C3AED",
   textPrimary: "#F5F7FA",
+  onPrimary: "#0B0D12",
   textSecondary: "#A7B0C0",
   success: "#4ADE80",
   warning: "#FBBF24",
@@ -29,6 +30,13 @@ export const radius = {
   control: 12,
 } as const;
 
+export const motion = {
+  durationFast: 120,
+  durationBase: 200,
+  contentOffset: 8,
+  pressScale: 0.98,
+} as const;
+
 export const typography = {
   title: { fontSize: 28, fontWeight: "700" } as TextStyle,
   cardTitle: { fontSize: 18, fontWeight: "600" } as TextStyle,
@@ -36,6 +44,12 @@ export const typography = {
   caption: { fontSize: 14 } as TextStyle,
   small: { fontSize: 13 } as TextStyle,
 } as const;
+
+export const inputTypography = {
+  fontFamily: Platform.OS === "web" ? "Arial, sans-serif" : undefined,
+  fontSize: 16,
+  fontWeight: "400" as const,
+} as TextStyle;
 
 export const layout = {
   maxContentWidth: 720,

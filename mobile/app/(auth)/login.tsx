@@ -1,11 +1,13 @@
 import * as React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/provider";
 import { AppButton } from "@/components/AppButton";
 import { AppTextField } from "@/components/AppTextField";
 import { AuthScreenContainer } from "@/components/AuthScreenContainer";
-import { colors, spacing } from "@/theme/theme";
+import { AuthBrand } from "@/components/BrandLogo";
+import { FadeInView } from "@/components/FadeInView";
+import { colors, spacing, typography } from "@/theme/theme";
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -43,11 +45,14 @@ export default function LoginScreen() {
 
     try {
       setIsSubmitting(true);
+      setErrorRed(null);
       await login(email, password);
       router.replace("/(app)");
     } catch (err: any) {
       if (err instanceof Error && err.message.includes("Network error")) {
-        setErrorRed("No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
+        setErrorRed(
+          "No se puede conectar con el servidor. Verifica tu conexión e intenta de nuevo."
+        );
       } else if (err.status === 429) {
         setErrorRed(
           `Demasiados intentos. Inténtalo de nuevo en ${err.retryAfter || "un momento"}.`
@@ -78,76 +83,104 @@ export default function LoginScreen() {
 
   return (
     <AuthScreenContainer>
-      {restoreError === "session_expired" && (
-        <View style={styles.expiredBanner}>
-          <Text style={styles.expiredBannerText}>Tu sesión caducó. Inicia sesión de nuevo.</Text>
+      <FadeInView>
+        {restoreError === "session_expired" && (
+          <View style={styles.expiredBanner}>
+            <Text style={styles.expiredBannerText}>
+              Tu sesión caducó. Inicia sesión de nuevo.
+            </Text>
+          </View>
+        )}
+
+        <View style={styles.hero}>
+          <AuthBrand />
+          <Text style={styles.title}>Bienvenido de nuevo</Text>
+          <Text style={styles.subtitle}>Tu próxima noche empieza aquí</Text>
         </View>
-      )}
 
-      <AppTextField
-        label="Correo electrónico"
-        value={email}
-        onChangeText={(text) => {
-          setEmail(text);
-          if (emailError) setEmailError(null);
-        }}
-        onBlur={onEmailBlur}
-        autoComplete="email"
-        keyboardType="email-address"
-        placeholder="tu@correo.com"
-        placeholderTextColor={colors.textSecondary}
-        hasError={emailTouched && !!emailError}
-      />
-      {emailTouched && emailError && (
-        <Text style={styles.errorText}>{emailError}</Text>
-      )}
+        <AppTextField
+          label="Correo electrónico"
+          value={email}
+          onChangeText={(text) => {
+            setEmail(text);
+            if (emailError) setEmailError(null);
+          }}
+          onBlur={onEmailBlur}
+          autoComplete="email"
+          autoCapitalize="none"
+          keyboardType="email-address"
+          placeholder="tu@correo.com"
+          placeholderTextColor={colors.textSecondary}
+          hasError={emailTouched && !!emailError}
+          errorText={emailTouched ? emailError : null}
+        />
 
-      <AppTextField
-        label="Contraseña"
-        value={password}
-        onChangeText={(text) => {
-          setPassword(text);
-          if (passwordError) setPasswordError(null);
-        }}
-        onBlur={onPasswordBlur}
-        secureTextEntry={true}
-        autoComplete="current-password"
-        placeholder="Tu contraseña"
-        placeholderTextColor={colors.textSecondary}
-        hasError={passwordTouched && !!passwordError}
-      />
-      {passwordTouched && passwordError && (
-        <Text style={styles.errorText}>{passwordError}</Text>
-      )}
+        <AppTextField
+          label="Contraseña"
+          value={password}
+          onChangeText={(text) => {
+            setPassword(text);
+            if (passwordError) setPasswordError(null);
+          }}
+          onBlur={onPasswordBlur}
+          secureTextEntry
+          showPasswordToggle
+          autoComplete="current-password"
+          autoCapitalize="none"
+          placeholder="Tu contraseña"
+          placeholderTextColor={colors.textSecondary}
+          hasError={passwordTouched && !!passwordError}
+          errorText={passwordTouched ? passwordError : null}
+        />
 
-      {errorRed && (
-        <View style={styles.errorRedBanner}>
-          <Text style={styles.errorRedText}>{errorRed}</Text>
-        </View>
-      )}
+        {errorRed && (
+          <View style={styles.errorRedBanner}>
+            <Text style={styles.errorRedText}>{errorRed}</Text>
+          </View>
+        )}
 
-      <AppButton
-        title="Entrar"
-        onPress={onSubmit}
-        variant="primary"
-        loading={isSubmitting}
-        disabled={isSubmitting}
-        style={styles.enterButton}
-      />
+        <AppButton
+          title="Iniciar sesión"
+          onPress={onSubmit}
+          variant="primary"
+          loading={isSubmitting}
+          disabled={isSubmitting}
+          style={styles.enterButton}
+        />
 
-      <View style={styles.linkContainer}>
-        <Text style={styles.linkText}>
-          ¿No tienes cuenta?{" "}
-          <Text style={styles.link} onPress={() => router.push("/(auth)/register")}>
-            Crear cuenta
+        <Pressable
+          onPress={() => router.push("/(auth)/register")}
+          accessibilityRole="link"
+          accessibilityLabel="Crear cuenta"
+          style={styles.linkContainer}
+        >
+          <Text style={styles.linkText}>
+            ¿No tienes cuenta?{" "}
+            <Text style={styles.link}>Crear cuenta</Text>
           </Text>
-        </Text>
-      </View>
+        </Pressable>
+      </FadeInView>
     </AuthScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  hero: {
+    alignItems: "center",
+    marginBottom: spacing.xxl,
+  },
+  title: {
+    ...typography.title,
+    color: colors.textPrimary,
+    textAlign: "center",
+    marginTop: spacing.xl,
+  },
+  subtitle: {
+    ...typography.body,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginTop: spacing.sm,
+  },
   expiredBanner: {
     padding: spacing.md,
     backgroundColor: colors.surfaceRaised,
@@ -161,19 +194,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
   },
-  errorText: {
-    color: colors.danger,
-    fontSize: 12,
-    marginBottom: spacing.sm,
-  },
   errorRedBanner: {
     padding: spacing.md,
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.danger,
     borderWidth: 1,
     borderRadius: 12,
-    marginTop: spacing.sm,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.md,
   },
   errorRedText: {
     color: colors.danger,
@@ -182,15 +209,18 @@ const styles = StyleSheet.create({
   },
   enterButton: {
     width: "100%",
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
   },
   linkContainer: {
     marginTop: spacing.xl,
+    minHeight: 48,
+    justifyContent: "center",
     alignItems: "center",
   },
   linkText: {
     color: colors.textSecondary,
     fontSize: 14,
+    textAlign: "center",
   },
   link: {
     color: colors.primary,

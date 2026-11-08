@@ -3,4 +3,5 @@ export interface DateTimeFieldProps {
   value: string;
   onChange: (next: string) => void;
   hasError?: boolean;
+  labelPosition?: "above" | "inside";
 }

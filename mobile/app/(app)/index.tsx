@@ -3,7 +3,6 @@ import {
   View,
   Text,
   RefreshControl,
-  Pressable,
   ScrollView,
   StyleSheet,
   ActivityIndicator,
@@ -14,9 +13,12 @@ import { useAuth } from "../../src/auth/provider";
 import { RoomResponse } from "../../src/api/dto";
 import { request, ApiError, NetworkError } from "@/api/client";
 import { ScreenContainer } from "@/components/ScreenContainer";
+import { ScreenHeader } from "@/components/ScreenHeader";
 import { AppButton } from "@/components/AppButton";
 import { RoomCard } from "@/components/RoomCard";
-import { colors, layout, radius, spacing, typography } from "@/theme/theme";
+import { FadeInView } from "@/components/FadeInView";
+import { resolveRoomsScreenState } from "@/features/rooms/roomsScreenState";
+import { colors, radius, spacing, typography } from "@/theme/theme";
 
 const PAGE_SIZE = 20;
 
@@ -31,6 +33,8 @@ export default function RoomsScreen() {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [hasMore, setHasMore] = React.useState(true);
+  const [hasCompletedInitialLoad, setHasCompletedInitialLoad] =
+    React.useState(false);
 
   const requestIdRef = React.useRef(0);
   const mountedRef = React.useRef(true);
@@ -86,6 +90,9 @@ export default function RoomsScreen() {
         if (mountedRef.current && requestId === requestIdRef.current) {
           setIsLoading(false);
           setIsLoadingMore(false);
+          if (reset) {
+            setHasCompletedInitialLoad(true);
+          }
         }
       }
     },
@@ -119,10 +126,16 @@ export default function RoomsScreen() {
         return;
       }
 
-      // Al volver del foco (creación o detalle), recargar la primera página.
       loadPage(1, true);
     }, [loginStatus, loadPage])
   );
+
+  const screenState = resolveRoomsScreenState({
+    hasCompletedInitialLoad,
+    isLoading,
+    error,
+    roomCount: rooms.length,
+  });
 
   if (loginStatus === "checking") {
     return (
@@ -135,8 +148,6 @@ export default function RoomsScreen() {
     );
   }
 
-  const showInitialLoading = isLoading && rooms.length === 0 && !error;
-  const showEmpty = !isLoading && !error && rooms.length === 0;
   const artistLabel = (user?.artistName ?? "").trim() || user?.email || "";
 
   const handleLogout = () => {
@@ -147,106 +158,130 @@ export default function RoomsScreen() {
 
   return (
     <ScreenContainer>
-      <View style={styles.header}>
+      <ScreenHeader
+        showBack={false}
+        showBrand
+        rightAction={{
+          title: "Cerrar sesión",
+          onPress: handleLogout,
+          iconName: "log-out-outline",
+        }}
+      />
+
+      <FadeInView style={styles.fade}>
         <View style={styles.headerTexts}>
-          {artistLabel ? <Text style={styles.greeting}>Hola, {artistLabel}</Text> : null}
+          {artistLabel ? (
+            <Text style={styles.greeting}>Hola, {artistLabel}</Text>
+          ) : null}
           <Text style={styles.title}>Mis salas</Text>
         </View>
-        <Pressable
-          onPress={handleLogout}
-          accessibilityRole="button"
-          accessibilityLabel="Cerrar sesión"
-          hitSlop={8}
-          style={({ pressed }) => [styles.logoutButton, pressed && styles.logoutPressed]}
-        >
-          <Ionicons name="log-out-outline" size={22} color={colors.textSecondary} />
-        </Pressable>
-      </View>
 
-      <View style={styles.createBar}>
-        <AppButton
-          title="Crear sala"
-          iconName="add"
-          onPress={() => router.push("/(app)/create")}
-          style={styles.createButton}
-        />
-      </View>
-
-      <ScrollView
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={doRefresh}
-            tintColor={colors.primary}
-            colors={[colors.primary]}
-          />
-        }
-        onScroll={({ nativeEvent }) => {
-          const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
-          const isCloseToBottom =
-            layoutMeasurement.height + contentOffset.y >= contentSize.height - 64;
-          if (isCloseToBottom) {
-            loadMore();
-          }
-        }}
-        scrollEventThrottle={16}
-      >
-        {showInitialLoading ? (
-          <View style={styles.centeredFill}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.loadingText}>Cargando tus salas…</Text>
-          </View>
-        ) : error ? (
-          <View style={styles.stateBox}>
-            <Ionicons name="cloud-offline-outline" size={40} color={colors.danger} />
-            <Text style={styles.errorText}>{error}</Text>
+        {screenState.showCreateBar ? (
+          <View style={styles.createBar}>
             <AppButton
-              title="Reintentar"
-              variant="secondary"
-              loading={isRefreshing}
-              onPress={doRefresh}
-            />
-          </View>
-        ) : showEmpty ? (
-          <View style={styles.stateBox}>
-            <Ionicons name="musical-notes-outline" size={44} color={colors.primary} />
-            <Text style={styles.emptyTitle}>Aún no tienes salas</Text>
-            <Text style={styles.emptyText}>
-              Crea tu primera sala para empezar a recibir peticiones.
-            </Text>
-            <AppButton
-              title="Crear mi primera sala"
+              title="Crear sala"
               iconName="add"
               onPress={() => router.push("/(app)/create")}
+              style={styles.createButton}
             />
           </View>
-        ) : (
-          rooms.map((room) => (
-            <RoomCard
-              key={room.id}
-              room={room}
-              onPress={() => router.push(`/(app)/room/${room.id}`)}
+        ) : null}
+
+        <ScrollView
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={doRefresh}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
             />
-          ))
-        )}
+          }
+          onScroll={({ nativeEvent }) => {
+            const { layoutMeasurement, contentOffset, contentSize } =
+              nativeEvent;
+            const isCloseToBottom =
+              layoutMeasurement.height + contentOffset.y >=
+              contentSize.height - 64;
+            if (isCloseToBottom) {
+              loadMore();
+            }
+          }}
+          scrollEventThrottle={16}
+        >
+          {screenState.mode === "initialLoading" ? (
+            <View style={styles.centeredFill}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.loadingText}>Cargando tus salas…</Text>
+            </View>
+          ) : screenState.mode === "error" ? (
+            <View style={styles.stateBox}>
+              <Ionicons
+                name="cloud-offline-outline"
+                size={40}
+                color={colors.danger}
+              />
+              <Text style={styles.errorText}>{error}</Text>
+              <AppButton
+                title="Reintentar"
+                variant="secondary"
+                loading={isLoading || isRefreshing}
+                onPress={doRefresh}
+                style={styles.retryButton}
+              />
+            </View>
+          ) : screenState.mode === "empty" ? (
+            <View style={styles.stateBox}>
+              <Ionicons
+                name="musical-notes-outline"
+                size={44}
+                color={colors.primary}
+              />
+              <Text style={styles.emptyTitle}>Aún no tienes salas</Text>
+              <AppButton
+                title="Crear mi primera sala"
+                onPress={() => router.push("/(app)/create")}
+                style={styles.emptyButton}
+              />
+            </View>
+          ) : (
+            <>
+              {screenState.showInlineError && error ? (
+                <View style={styles.inlineError}>
+                  <Text style={styles.inlineErrorText}>{error}</Text>
+                </View>
+              ) : null}
 
-        {isLoadingMore && (
-          <View style={styles.loadingMore}>
-            <ActivityIndicator size="small" color={colors.primary} />
-          </View>
-        )}
+              {rooms.map((room) => (
+                <RoomCard
+                  key={room.id}
+                  room={room}
+                  onPress={() => router.push(`/(app)/room/${room.id}`)}
+                />
+              ))}
 
-        {!hasMore && rooms.length > 0 && (
-          <Text style={styles.endOfList}>No hay más salas.</Text>
-        )}
-      </ScrollView>
+              {isLoadingMore ? (
+                <View style={styles.loadingMore}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                </View>
+              ) : null}
+
+              {!hasMore && rooms.length > 0 ? (
+                <Text style={styles.endOfList}>No hay más salas.</Text>
+              ) : null}
+            </>
+          )}
+        </ScrollView>
+      </FadeInView>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  fade: {
+    flex: 1,
+  },
   centeredFill: {
     flexGrow: 1,
     minHeight: 240,
@@ -259,16 +294,9 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
   },
-  header: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
-  },
   headerTexts: {
-    flex: 1,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
   },
   greeting: {
     ...typography.caption,
@@ -279,23 +307,8 @@ const styles = StyleSheet.create({
     ...typography.title,
     color: colors.textPrimary,
   },
-  logoutButton: {
-    minWidth: layout.minTouchTarget,
-    minHeight: layout.minTouchTarget,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radius.control,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.sm,
-  },
-  logoutPressed: {
-    backgroundColor: colors.surfaceRaised,
-    borderColor: colors.primary,
-  },
   createBar: {
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.lg,
   },
   createButton: {
     width: "100%",
@@ -320,18 +333,33 @@ const styles = StyleSheet.create({
     ...typography.cardTitle,
     color: colors.textPrimary,
     marginTop: spacing.sm,
-  },
-  emptyText: {
-    ...typography.caption,
-    color: colors.textSecondary,
     textAlign: "center",
+  },
+  emptyButton: {
+    width: "100%",
     maxWidth: 320,
+    marginTop: spacing.sm,
+  },
+  retryButton: {
+    minWidth: 180,
   },
   errorText: {
     fontSize: 15,
     color: colors.danger,
     textAlign: "center",
     maxWidth: 360,
+  },
+  inlineError: {
+    padding: spacing.md,
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.danger,
+    borderWidth: 1,
+    borderRadius: radius.control,
+  },
+  inlineErrorText: {
+    color: colors.danger,
+    fontSize: 13,
+    textAlign: "center",
   },
   loadingMore: {
     alignItems: "center",

@@ -4,9 +4,10 @@ import {
   Text,
   ScrollView,
   StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { useAuth } from "../../src/auth/provider";
 import { createRoomSchema } from "../../src/api/dto";
 import { RoomResponse } from "@/api/dto";
 import { request, ApiError, NetworkError } from "@/api/client";
@@ -15,9 +16,17 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { AppButton } from "@/components/AppButton";
 import { AppTextField } from "@/components/AppTextField";
+import { BrandLogo } from "@/components/BrandLogo";
+import { FadeInView } from "@/components/FadeInView";
 import { colors, spacing, typography } from "@/theme/theme";
 
-function parseLocalDateTime(input: string): { year: number; month: number; day: number; hour: number; minute: number } | null {
+function parseLocalDateTime(input: string): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+} | null {
   const match = input.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/);
   if (!match) return null;
 
@@ -28,10 +37,25 @@ function parseLocalDateTime(input: string): { year: number; month: number; day: 
   const hour = parseInt(hourS, 10);
   const minute = parseInt(minuteS, 10);
 
-  if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31)
+    return null;
   if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
 
-  const daysInMonth = [31, 28 + ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 1 : 0), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const daysInMonth = [
+    31,
+    28 +
+      ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 1 : 0),
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
   if (day > daysInMonth[month - 1]) return null;
 
   return { year, month, day, hour, minute };
@@ -39,12 +63,11 @@ function parseLocalDateTime(input: string): { year: number; month: number; day: 
 
 export default function CreateScreen() {
   const router = useRouter();
-  const { user } = useAuth();
 
   const [name, setName] = React.useState("");
   const [startsAtInput, setStartsAtInput] = React.useState("");
   const [endsAtInput, setEndsAtInput] = React.useState("");
-  const [timezone, setTimezone] = React.useState("America/Mexico_City");
+  const [timezone] = React.useState("America/Mexico_City");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [nameError, setNameError] = React.useState<string | null>(null);
   const [startsAtError, setStartsAtError] = React.useState<string | null>(null);
@@ -65,10 +88,13 @@ export default function CreateScreen() {
   const onSubmit = async () => {
     setGeneralError(null);
     let valid = true;
-    let parsedStart: { year: number; month: number; day: number; hour: number; minute: number } | undefined;
-    let parsedEnd: { year: number; month: number; day: number; hour: number; minute: number } | undefined;
+    let parsedStart:
+      | { year: number; month: number; day: number; hour: number; minute: number }
+      | undefined;
+    let parsedEnd:
+      | { year: number; month: number; day: number; hour: number; minute: number }
+      | undefined;
 
-    // 1. Validar nombre
     if (!name.trim()) {
       setNameError("Nombre requerido");
       setNameTouched(true);
@@ -77,7 +103,6 @@ export default function CreateScreen() {
       setNameError(null);
     }
 
-    // 2. Validar y parsea startsAt
     if (!startsAtInput.trim()) {
       setStartsAtError("Fecha requerida");
       setStartsAtTouched(true);
@@ -85,7 +110,7 @@ export default function CreateScreen() {
     } else {
       const pStart = parseLocalDateTime(startsAtInput);
       if (!pStart) {
-        setStartsAtError("Formato de fecha inválido. Use AAAA-MM-DD HH:mm");
+        setStartsAtError("Formato de fecha inválido");
         setStartsAtTouched(true);
         valid = false;
       } else {
@@ -94,7 +119,6 @@ export default function CreateScreen() {
       }
     }
 
-    // 3. Validar y parsea endsAt
     if (!endsAtInput.trim()) {
       setEndsAtError("Fecha requerida");
       setEndsAtTouched(true);
@@ -102,7 +126,7 @@ export default function CreateScreen() {
     } else {
       const pEnd = parseLocalDateTime(endsAtInput);
       if (!pEnd) {
-        setEndsAtError("Formato de fecha inválido. Use AAAA-MM-DD HH:mm");
+        setEndsAtError("Formato de fecha inválido");
         setEndsAtTouched(true);
         valid = false;
       } else {
@@ -113,11 +137,25 @@ export default function CreateScreen() {
 
     if (!valid) return;
 
-    // 4. Validar que fin > inicio usando Date objects
-    const dateStart = new Date(parsedStart!.year, parsedStart!.month - 1, parsedStart!.day, parsedStart!.hour, parsedStart!.minute, 0, 0);
-    const dateEnd = new Date(parsedEnd!.year, parsedEnd!.month - 1, parsedEnd!.day, parsedEnd!.hour, parsedEnd!.minute, 0, 0);
+    const dateStart = new Date(
+      parsedStart!.year,
+      parsedStart!.month - 1,
+      parsedStart!.day,
+      parsedStart!.hour,
+      parsedStart!.minute,
+      0,
+      0
+    );
+    const dateEnd = new Date(
+      parsedEnd!.year,
+      parsedEnd!.month - 1,
+      parsedEnd!.day,
+      parsedEnd!.hour,
+      parsedEnd!.minute,
+      0,
+      0
+    );
 
-    // Verificación anti-normalización: comparar componentes
     if (
       dateStart.getFullYear() !== parsedStart!.year ||
       dateStart.getMonth() !== parsedStart!.month - 1 ||
@@ -125,7 +163,7 @@ export default function CreateScreen() {
       dateStart.getHours() !== parsedStart!.hour ||
       dateStart.getMinutes() !== parsedStart!.minute
     ) {
-      setStartsAtError("Fecha/hora inválida (normalización)");
+      setStartsAtError("Fecha/hora inválida");
       setStartsAtTouched(true);
       return;
     }
@@ -136,7 +174,7 @@ export default function CreateScreen() {
       dateEnd.getHours() !== parsedEnd!.hour ||
       dateEnd.getMinutes() !== parsedEnd!.minute
     ) {
-      setEndsAtError("Fecha/hora inválida (normalización)");
+      setEndsAtError("Fecha/hora inválida");
       setEndsAtTouched(true);
       return;
     }
@@ -147,7 +185,6 @@ export default function CreateScreen() {
       return;
     }
 
-    // 5. Validar fin > ahora (fecha actual en local)
     const now = new Date();
     if (dateEnd <= now) {
       setEndsAtError("La fecha de fin debe ser posterior al momento actual");
@@ -155,11 +192,9 @@ export default function CreateScreen() {
       return;
     }
 
-    // 6. Construir payload usando toISOString() (interpreta hora local del dispositivo)
     const startsAtISO = dateStart.toISOString();
     const endsAtISO = dateEnd.toISOString();
 
-    // 7. Aplicar createRoomSchema.safeParse
     const validated = createRoomSchema.safeParse({
       name: name.trim(),
       startsAt: startsAtISO,
@@ -168,25 +203,25 @@ export default function CreateScreen() {
     });
 
     if (!validated.success) {
-      // Mapear errores de Zod a campos
       for (const err of validated.error.errors) {
-        const path = err.path[0] as keyof { name: string; startsAt: string; endsAt: string };
+        const path = err.path[0] as keyof {
+          name: string;
+          startsAt: string;
+          endsAt: string;
+        };
         if (path === "name") setNameError(err.message);
         else if (path === "startsAt") setStartsAtError(err.message);
         else if (path === "endsAt") setEndsAtError(err.message);
         else setGeneralError(err.message);
       }
-      // Marcar touched para que aparezcan los mensajes
       setNameTouched(true);
       setStartsAtTouched(true);
       setEndsAtTouched(true);
       return;
     }
 
-    // 8. Enviar con request() del cliente API
     setIsSubmitting(true);
     try {
-      // Si la sala ya fue creada, no repetir el POST; solo reintentar la navegación.
       let room: RoomResponse;
       if (createdRoomIdRef.current) {
         room = { id: createdRoomIdRef.current } as RoomResponse;
@@ -196,14 +231,14 @@ export default function CreateScreen() {
             name: validated.data.name,
             startsAt: validated.data.startsAt,
             endsAt: validated.data.endsAt,
-            timezone: validated.data.timezone || "America/Mexico_City",
+            timezone: validated.data.timezone || timezone,
           },
         });
         createdRoomIdRef.current = room.id;
       }
 
       if (room.id) {
-        router.push(`/(app)/room/${room.id}`);
+        router.replace(`/(app)/room/${room.id}`);
       } else {
         setGeneralError("La respuesta no contiene el ID de la sala");
       }
@@ -230,88 +265,96 @@ export default function CreateScreen() {
 
   return (
     <ScreenContainer>
-      <ScreenHeader showBack={true} />
+      <ScreenHeader showBack />
 
-      <View style={styles.scrollWrapper}>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoiding}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.formContainer}>
-            <AppTextField
-              label="Nombre de la sala"
-              value={name}
-              onChange={(text) => {
-                setName(text);
-                if (nameError) setNameError(null);
-              }}
-              helpText="El nombre de la sala es obligatorio"
-              hasError={nameTouched && !!nameError}
-            />
-            {nameTouched && nameError && (
-              <Text style={styles.errorText}>{nameError}</Text>
-            )}
-
-            <DateTimeField
-              label="Inicio del evento"
-              value={startsAtInput}
-              onChange={(v) => {
-                setStartsAtInput(v);
-                setStartsAtTouched(true);
-                if (startsAtError) setStartsAtError(null);
-              }}
-              hasError={startsAtTouched && !!startsAtError}
-            />
-            {startsAtTouched && startsAtError && (
-              <Text style={styles.errorText}>{startsAtError}</Text>
-            )}
-
-            <DateTimeField
-              label="Fin del evento"
-              value={endsAtInput}
-              onChange={(v) => {
-                setEndsAtInput(v);
-                setEndsAtTouched(true);
-                if (endsAtError) setEndsAtError(null);
-              }}
-              hasError={endsAtTouched && !!endsAtError}
-            />
-            {endsAtTouched && endsAtError && (
-              <Text style={styles.errorText}>{endsAtError}</Text>
-            )}
-
-            <Text style={styles.zoneText}>
-              Las horas se interpretan en la zona de tu dispositivo
-            </Text>
-
-            <AppButton
-              title="Crear sala"
-              iconName="add"
-              onPress={onSubmit}
-              style={styles.createButton}
-              disabled={isSubmitting}
-            />
-
-            {generalError && (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{generalError}</Text>
+          <FadeInView style={styles.fade}>
+            <View style={styles.formContainer}>
+              <View style={styles.hero}>
+                <BrandLogo size={64} showWordmark wordmarkSize={22} />
+                <Text style={styles.title}>Crea una sala</Text>
+                <Text style={styles.subtitle}>
+                  Prepara el espacio para tu próximo evento
+                </Text>
               </View>
-            )}
-          </View>
+
+              <AppTextField
+                label="Nombre de la sala"
+                labelPosition="hidden"
+                value={name}
+                onChangeText={(text) => {
+                  setName(text);
+                  if (nameError) setNameError(null);
+                }}
+                onBlur={onNameBlur}
+                placeholder="Nombre de la sala"
+                placeholderTextColor={colors.textSecondary}
+                hasError={nameTouched && !!nameError}
+                errorText={nameTouched ? nameError : null}
+              />
+
+              <DateTimeField
+                label="Inicio del evento"
+                labelPosition="inside"
+                value={startsAtInput}
+                onChange={(v) => {
+                  setStartsAtInput(v);
+                  setStartsAtTouched(true);
+                  if (startsAtError) setStartsAtError(null);
+                }}
+                hasError={startsAtTouched && !!startsAtError}
+              />
+              {startsAtTouched && startsAtError && (
+                <Text style={styles.errorText}>{startsAtError}</Text>
+              )}
+
+              <DateTimeField
+                label="Fin del evento"
+                labelPosition="inside"
+                value={endsAtInput}
+                onChange={(v) => {
+                  setEndsAtInput(v);
+                  setEndsAtTouched(true);
+                  if (endsAtError) setEndsAtError(null);
+                }}
+                hasError={endsAtTouched && !!endsAtError}
+              />
+              {endsAtTouched && endsAtError && (
+                <Text style={styles.errorText}>{endsAtError}</Text>
+              )}
+
+              <AppButton
+                title="Crear sala"
+                onPress={onSubmit}
+                style={styles.createButton}
+                loading={isSubmitting}
+                disabled={isSubmitting}
+              />
+
+              {generalError && (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorBoxText}>{generalError}</Text>
+                </View>
+              )}
+            </View>
+          </FadeInView>
         </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  formContainer: {
-    width: "100%",
-    maxWidth: 400,
-  },
-  scrollWrapper: {
+  keyboardAvoiding: {
     flex: 1,
   },
   scrollView: {
@@ -319,29 +362,56 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: "center",
+    justifyContent: "flex-start",
     alignItems: "center",
+    paddingTop: spacing.sm,
     paddingBottom: spacing.xxl,
   },
-  errorText: {
-    fontSize: 12,
-    color: colors.danger,
-    marginBottom: spacing.xs,
+  fade: {
+    width: "100%",
+    alignItems: "center",
   },
-  zoneText: {
-    ...typography.small,
+  formContainer: {
+    width: "100%",
+    maxWidth: 400,
+  },
+  hero: {
+    alignItems: "center",
+    marginBottom: spacing.xxl,
+  },
+  title: {
+    ...typography.title,
+    color: colors.textPrimary,
+    textAlign: "center",
+    marginTop: spacing.xl,
+  },
+  subtitle: {
+    ...typography.body,
     color: colors.textSecondary,
-    marginTop: spacing.md,
+    textAlign: "center",
+    marginTop: spacing.sm,
+  },
+  errorText: {
+    fontSize: 13,
+    color: colors.danger,
+    marginTop: -spacing.sm,
+    marginBottom: spacing.md,
   },
   createButton: {
     width: "100%",
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
   },
   errorBox: {
-    padding: 12,
-    backgroundColor: "#ffeef0",
-    borderRadius: 8,
-    marginTop: 12,
-    alignItems: "center",
+    padding: spacing.md,
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.danger,
+    borderWidth: 1,
+    borderRadius: 12,
+    marginTop: spacing.md,
+  },
+  errorBoxText: {
+    color: colors.danger,
+    fontSize: 13,
+    textAlign: "center",
   },
 });

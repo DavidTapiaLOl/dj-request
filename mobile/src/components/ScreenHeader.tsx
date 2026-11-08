@@ -1,19 +1,26 @@
 import * as React from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { colors, spacing } from "../theme/theme";
+import { colors, layout, radius, spacing } from "../theme/theme";
+import { BrandLogo } from "./BrandLogo";
 
 interface ScreenHeaderProps {
   showBack?: boolean;
+  showBrand?: boolean;
   rightAction?: {
     title: string;
     onPress: () => void;
     iconName?: keyof typeof Ionicons.glyphMap;
+    showTitle?: boolean;
   };
 }
 
-export function ScreenHeader({ showBack = true, rightAction }: ScreenHeaderProps) {
+export function ScreenHeader({
+  showBack = true,
+  showBrand = false,
+  rightAction,
+}: ScreenHeaderProps) {
   const router = useRouter();
 
   const handleBack = () => {
@@ -26,55 +33,116 @@ export function ScreenHeader({ showBack = true, rightAction }: ScreenHeaderProps
 
   return (
     <View style={styles.container}>
-      <View style={styles.backArea}>
-        {showBack && (
-          <TouchableOpacity
-            style={styles.backButton}
+      <View style={styles.leftSlot}>
+        {showBack ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.iconButton,
+              pressed && styles.iconButtonPressed,
+            ]}
             onPress={handleBack}
             accessibilityRole="button"
             accessibilityLabel="Volver"
           >
-            <Ionicons name="arrow-back" size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
-        )}
+            <Ionicons
+              name="arrow-back"
+              size={22}
+              color={colors.textPrimary}
+            />
+          </Pressable>
+        ) : showBrand ? (
+          <BrandLogo
+            size={32}
+            orientation="inline"
+            showWordmark
+            wordmarkSize={20}
+          />
+        ) : null}
       </View>
-      {rightAction && (
-        <View style={styles.rightSlot}>
-          <TouchableOpacity onPress={rightAction.onPress} accessibilityRole="button" accessibilityLabel={rightAction.title}>
-            <Ionicons name={rightAction.iconName || "menu"} size={18} color={colors.textSecondary} />
-            <Text style={styles.rightText}>{rightAction.title}</Text>
-          </TouchableOpacity>
+
+      {showBack && showBrand ? (
+        <View style={styles.centerSlot}>
+          <BrandLogo
+            size={32}
+            orientation="inline"
+            showWordmark
+            wordmarkSize={20}
+          />
         </View>
+      ) : (
+        <View style={styles.flexSpacer} />
       )}
+
+      <View style={styles.rightSlot}>
+        {rightAction ? (
+          <Pressable
+            onPress={rightAction.onPress}
+            accessibilityRole="button"
+            accessibilityLabel={rightAction.title}
+            style={({ pressed }) => [
+              styles.iconButton,
+              rightAction.showTitle && styles.textButton,
+              pressed && styles.iconButtonPressed,
+            ]}
+          >
+            <Ionicons
+              name={rightAction.iconName || "menu"}
+              size={21}
+              color={colors.textSecondary}
+            />
+            {rightAction.showTitle ? (
+              <Text style={styles.rightText}>{rightAction.title}</Text>
+            ) : null}
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: "transparent",
-  },
-  backArea: {
+    minHeight: 56,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    paddingVertical: spacing.sm,
   },
-  backButton: {
-    minWidth: 48,
-    minHeight: 48,
-    padding: 6,
-    backgroundColor: "transparent",
+  leftSlot: {
+    minWidth: layout.minTouchTarget,
+    alignItems: "flex-start",
+    justifyContent: "center",
+  },
+  centerSlot: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  flexSpacer: {
+    flex: 1,
   },
   rightSlot: {
-    flexDirection: "row",
+    minWidth: layout.minTouchTarget,
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+  iconButton: {
+    minWidth: layout.minTouchTarget,
+    minHeight: layout.minTouchTarget,
     alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.control,
+  },
+  textButton: {
+    flexDirection: "row",
     gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  iconButtonPressed: {
+    backgroundColor: colors.surface,
   },
   rightText: {
     color: colors.textSecondary,
-    fontSize: 12,
-    marginLeft: spacing.xs,
+    fontSize: 13,
+    fontWeight: "600",
   },
 });

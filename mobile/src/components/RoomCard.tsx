@@ -17,6 +17,10 @@ export function RoomCard({ room, onPress }: RoomCardProps) {
     [room.startsAt, room.endsAt, room.timezone]
   );
 
+  const scheduleLabel = schedule
+    ? [schedule.primary, schedule.secondary].filter(Boolean).join(" – ")
+    : null;
+
   return (
     <Pressable
       onPress={onPress}
@@ -24,37 +28,37 @@ export function RoomCard({ room, onPress }: RoomCardProps) {
       accessibilityLabel={`Ver sala ${room.nombre}`}
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
-      <View style={styles.topRow}>
+      <View style={styles.nameRow}>
         <Text style={styles.name}>{room.nombre}</Text>
-        <Ionicons name="chevron-forward" size={22} color={colors.textSecondary} style={styles.chevron} />
+        <StatusBadge estado={room.estado} hasEnded={room.hasEnded} />
       </View>
 
-      <StatusBadge estado={room.estado} hasEnded={room.hasEnded} />
-
-      {schedule ? (
-        <View style={styles.schedule}>
-          <View style={styles.scheduleRow}>
-            <Ionicons name="calendar-outline" size={15} color={colors.textSecondary} />
-            <Text style={styles.scheduleText}>{schedule.primary}</Text>
-          </View>
-          {schedule.secondary ? (
-            <View style={styles.scheduleRow}>
-              <Ionicons name="calendar-outline" size={15} color={colors.textSecondary} />
-              <Text style={styles.scheduleText}>{schedule.secondary}</Text>
-            </View>
-          ) : null}
-          {schedule.timeZone ? (
-            <Text style={styles.timeZone}>Zona horaria: {schedule.timeZone}</Text>
-          ) : null}
+      {scheduleLabel ? (
+        <View style={styles.scheduleRow}>
+          <Ionicons
+            name="calendar-outline"
+            size={16}
+            color={colors.textSecondary}
+          />
+          <Text style={styles.scheduleText}>{scheduleLabel}</Text>
         </View>
       ) : null}
 
-      <View style={styles.footer}>
-        <Text style={styles.code}>Código {room.codigo}</Text>
-        <View style={styles.openRow}>
-          <Text style={styles.openText}>Ver sala</Text>
-          <Ionicons name="arrow-forward" size={16} color={colors.primary} />
-        </View>
+      <View style={styles.separator} />
+
+      <View style={styles.codeRow}>
+        <Ionicons
+          name="ticket-outline"
+          size={18}
+          color={colors.primary}
+        />
+        <Text style={styles.codeLabel}>Código</Text>
+        <Text style={styles.code}>{room.codigo}</Text>
+      </View>
+
+      <View style={styles.viewRoomButton}>
+        <Text style={styles.viewRoomText}>Ver sala</Text>
+        <Ionicons name="arrow-forward" size={18} color={colors.primary} />
       </View>
     </Pressable>
   );
@@ -73,7 +77,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.primary,
   },
-  topRow: {
+  nameRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
@@ -82,52 +86,55 @@ const styles = StyleSheet.create({
   name: {
     ...typography.cardTitle,
     flex: 1,
+    minWidth: 0,
     color: colors.textPrimary,
-  },
-  chevron: {
-    marginTop: 2,
-  },
-  schedule: {
-    gap: spacing.xs,
   },
   scheduleRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: spacing.sm,
   },
   scheduleText: {
     ...typography.caption,
     color: colors.textSecondary,
-    flexShrink: 1,
+    flex: 1,
+    minWidth: 0,
+    lineHeight: 20,
   },
-  timeZone: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
+  separator: {
+    height: 1,
+    backgroundColor: colors.border,
   },
-  footer: {
+  codeRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: spacing.md,
+  },
+  codeLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
   },
   code: {
     ...typography.caption,
-    color: colors.textSecondary,
-    flexShrink: 1,
+    color: colors.textPrimary,
+    fontWeight: "600",
+    letterSpacing: 0.5,
   },
-  openRow: {
+  viewRoomButton: {
+    width: "100%",
+    minHeight: 48,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.xs,
-    minHeight: 24,
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.control,
+    backgroundColor: colors.surfaceRaised,
   },
-  openText: {
-    fontSize: 14,
+  viewRoomText: {
+    ...typography.body,
     fontWeight: "600",
-    color: colors.primary,
+    color: colors.textPrimary,
   },
 });
