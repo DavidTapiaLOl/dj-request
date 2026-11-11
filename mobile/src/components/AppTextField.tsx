@@ -53,6 +53,9 @@ interface AppTextFieldProps {
   errorText?: string | null;
   hasError?: boolean;
   labelPosition?: "above" | "hidden";
+  multiline?: boolean;
+  numberOfLines?: number;
+  maxLength?: number;
   style?: StyleProp<TextStyle>;
 }
 
@@ -76,6 +79,9 @@ export function AppTextField({
   errorText,
   hasError = false,
   labelPosition = "above",
+  multiline = false,
+  numberOfLines,
+  maxLength,
   style,
 }: AppTextFieldProps) {
   const [focused, setFocused] = React.useState(false);
@@ -104,6 +110,7 @@ export function AppTextField({
       <View
         style={[
           styles.inputShell,
+          multiline && styles.inputShellMultiline,
           showError && styles.inputError,
           focused && styles.inputFocused,
         ]}
@@ -116,12 +123,21 @@ export function AppTextField({
           secureTextEntry={secureTextEntry && !passwordVisible}
           placeholder={placeholder || label}
           placeholderTextColor={placeholderTextColor ?? colors.textSecondary}
-          style={[styles.input, style, styles.inputTextColor, webAutofillStyle]}
+          style={[
+            styles.input,
+            multiline && styles.inputMultiline,
+            style,
+            styles.inputTextColor,
+            webAutofillStyle,
+          ]}
           autoComplete={autoComplete}
           autoCapitalize={autoCapitalize}
           autoCorrect={autoCorrect}
           textContentType={textContentType}
           keyboardType={keyboardType}
+          multiline={multiline}
+          numberOfLines={numberOfLines}
+          maxLength={maxLength}
           accessibilityLabel={label}
         />
         {showPasswordToggle ? (
@@ -177,6 +193,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.control,
     backgroundColor: colors.surfaceRaised,
   },
+  inputShellMultiline: {
+    alignItems: "flex-start",
+  },
   inputError: {
     borderColor: colors.danger,
   },
@@ -190,6 +209,12 @@ const styles = StyleSheet.create({
     paddingVertical: Platform.OS === "web" ? 12 : 0,
     backgroundColor: "transparent",
     ...inputTypography,
+  },
+  inputMultiline: {
+    minHeight: 120,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    textAlignVertical: "top",
   },
   inputTextColor: {
     color: colors.textPrimary,

@@ -6,7 +6,7 @@ global.json y carpetas backend, mobile, web, desktop, infrastructure, docs ya ex
 
 ## Componentes
 Todos los clientes hablan con la API mediante HTTPS. Solo backend y tareas operativas autorizadas acceden a PostgreSQL. QR contiene URL del sitio y código de invitación, nunca credenciales del DJ. Código permite entrar a una sala, no administrar.
-Una API modular: Accounts, Rooms, Requests, Playlists, Retention; Administration en fase 3. EF Core maneja persistencia. Un proceso periódico del backend maneja expiración. Actualizaciones en tiempo real se incorporan en tarea posterior; se consulta la API al reconectar y no se usa el canal como única fuente de verdad.
+Una API modular: Accounts, Rooms, Requests, Playlists, Profiles, Retention; Administration en fase 3. EF Core maneja persistencia. Un proceso periódico del backend maneja expiración. Actualizaciones en tiempo real se incorporan en tarea posterior; se consulta la API al reconectar y no se usa el canal como única fuente de verdad.
 
 ## Estructura propuesta del backend
 - backend/DjRequests.slnx
@@ -32,6 +32,13 @@ Invitado: token opaco aleatorio, limitado a sala, expirable y revocable; guardar
 - Precedencia 401/404 (en `GuestSessionService`): pertenencia a la sala antes que revocación/expiración; sesión expirada (401) antes que sala finalizada (404). Un token de otra sala o una sala inexistente/finalizada/purgada o DJ suspendido → 404 genérico sin revelar destino; token ausente/malformado/desconocido/revocado/expirado → 401.
 - Rate limiting declarativo: middleware `UseGuestSessionValidation` **antes** de `UseRateLimiter` popula `HttpContext.Items["GuestRateLimitPartition"]` (sesión válida → `session:{salaId}:{sesionId}`; inválida → IP con fallback `"unknown"`) sin tocar `HttpContext.User` ni cortar con errores. Los intentos inválidos consumen cuota por IP. `X-Forwarded-For` no se lee. Límites `guest-create` 60/min y `guest-get` 120/min, `QueueLimit = 0`, 429 con `Retry-After`.
 - El token de invitado no autentica endpoints de DJ; un bearer de DJ no sustituye `X-Guest-Token`. `Cache-Control: no-store` en respuestas de invitado.
+
+## Perfil del DJ (implementado)
+- Endpoints privados con política `ActiveDj`: `GET/PATCH /api/dj/profile` y `POST/DELETE /api/dj/profile/photo`. La identidad propietaria procede del `NameIdentifier` autenticado; el cliente no envía un `djId` confiable.
+- Endpoint invitado: `GET /api/guest/rooms/{roomId}/dj` con `X-Guest-Token`. Reutiliza la validación de sesión y solo devuelve nombre artístico, descripción, año, URL de foto y enlaces sociales. La respuesta usa `Cache-Control: no-store`.
+- Fotos públicas: `GET /api/profile-photos/{fileName}` solo admite nombres internos generados por el servidor. El almacenamiento se configura mediante `FileStorage`; por defecto queda en `storage/profiles`, fuera de Git y del directorio publicado. No se guardan imágenes en PostgreSQL ni Base64 en JSON.
+- Procesamiento: JPEG/PNG, 5 MB, máximo 50 millones de píxeles de origen, dimensión final máxima de 2048 px y eliminación de EXIF/IPTC/XMP. El reemplazo guarda primero la nueva imagen y conserva la anterior si falla la persistencia.
+- El backend usa `SixLabors.ImageSharp` 4.1.3. Los builds Debug funcionan; antes de publicar un build Release debe resolverse su requisito de licencia comercial o sustituirse por una alternativa compatible.
 
 ## Retención y operación
 Usar UTC, TimeProvider inyectable y timestamptz. Persistir zona IANA del evento para presentación. Ventana de retención propuesta: 168 horas exactas tras ends_at.

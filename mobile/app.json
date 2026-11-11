@@ -24,7 +24,15 @@
         }
       ],
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permite a DJ Requests acceder a tus fotos para tu perfil de DJ.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

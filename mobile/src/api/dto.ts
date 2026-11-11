@@ -60,6 +60,38 @@ export type RoomResponse = {
 
 export type ListRoomsResponse = RoomResponse[];
 
+// --- Perfil del DJ ---
+
+export type SocialLinks = {
+  instagram: string | null;
+  facebook: string | null;
+  tiktok: string | null;
+  youtube: string | null;
+  soundcloud: string | null;
+};
+
+export type ProfileResponse = {
+  artistName: string;
+  description: string | null;
+  startYear: number | null;
+  photoUrl: string | null;
+  socialLinks: SocialLinks;
+};
+
+export type UpdateProfileRequest = {
+  artistName: string;
+  description: string | null;
+  startYear: number | null;
+  socialLinks: SocialLinks;
+};
+
+export type ProfilePhotoUpload = {
+  uri: string;
+  name: string;
+  type: string;
+  file?: Blob;
+};
+
 // --- Solicitudes (Song Requests) ---
 
 export type SolicitudResponse = {

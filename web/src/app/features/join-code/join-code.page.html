@@ -1,10 +1,17 @@
 <main class="page">
-  <section class="panel">
-    <header class="brand">
-      <span class="brand__mark" aria-hidden="true">DJ</span>
-      <h1 class="brand__title">DJ Requests</h1>
-      <p class="brand__subtitle">Pide una canción para esta sala.</p>
-    </header>
+  <header class="topbar">
+    <a class="icon-button" routerLink="/" aria-label="Volver al inicio">
+      <span aria-hidden="true">←</span>
+    </a>
+    <app-brand-logo />
+    <span class="topbar__spacer" aria-hidden="true"></span>
+  </header>
+
+  <section class="join" aria-labelledby="join-title">
+    <app-brand-logo variant="hero" [showWordmark]="false" />
+
+    <h1 id="join-title" class="join__title">Entra a la sala</h1>
+    <p class="join__lede">Ingresa el código que te compartió el DJ.</p>
 
     @if (joining()) {
       <div class="joining" role="status" aria-live="polite">
@@ -24,14 +31,13 @@
             autocomplete="off"
             autocapitalize="characters"
             spellcheck="false"
-            aria-describedby="code-help"
-            placeholder="ABCDEFGHIJ"
+            [attr.aria-describedby]="showCodeError() ? 'code-help code-error' : 'code-help'"
+            [attr.aria-invalid]="showCodeError() ? 'true' : null"
+            placeholder="Ej. X6CCXUTSJ8"
           />
-          <span id="code-help" class="field__help">
-            Son 10 caracteres. Lo encuentras en el QR o en la app del DJ.
-          </span>
+          <span id="code-help" class="field__help">10 caracteres · letras y números</span>
           @if (showCodeError()) {
-            <span class="field__error" role="alert">{{ codeErrorMessage() }}</span>
+            <span id="code-error" class="field__error" role="alert">{{ codeErrorMessage() }}</span>
           }
         </label>
 
@@ -39,12 +45,12 @@
           <p class="form__error" role="alert">{{ errorMessage() }}</p>
         }
 
-        <button class="button button--primary" type="submit">Entrar</button>
+        <button class="button button--primary button--full" type="submit">
+          Entrar a la sala
+        </button>
       </form>
     }
-  </section>
 
-  @if (fromLink()) {
-    <a class="back-link" routerLink="/">Volver al inicio</a>
-  }
+    <p class="join__help">¿No tienes el código? Pídeselo al organizador.</p>
+  </section>
 </main>

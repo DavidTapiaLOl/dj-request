@@ -65,3 +65,19 @@ export interface Genero {
   id: number;
   nombre: string;
 }
+
+export interface SocialLinks {
+  instagram: string | null;
+  facebook: string | null;
+  tiktok: string | null;
+  youtube: string | null;
+  soundcloud: string | null;
+}
+
+export interface DjProfile {
+  artistName: string;
+  description: string | null;
+  startYear: number | null;
+  photoUrl: string | null;
+  socialLinks: SocialLinks;
+}

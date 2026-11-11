@@ -1,6 +1,11 @@
-import type { z } from "zod";
-import { MeResponse, SolicitudPageResponse, SolicitudResponse } from "./dto";
-import * as SecureStore from "expo-secure-store";
+import {
+  MeResponse,
+  ProfilePhotoUpload,
+  ProfileResponse,
+  SolicitudPageResponse,
+  SolicitudResponse,
+  UpdateProfileRequest,
+} from "./dto";
 import * as Storage from "../auth/storage";
 
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -16,11 +21,26 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public type?: string,
-    public retryAfter?: string
+    public retryAfter?: string,
+    public errors?: Record<string, string[]>
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+function buildApiError(
+  status: number,
+  errorData: { detail?: string; message?: string; type?: string; errors?: Record<string, string[]> },
+  retryAfter?: string
+): ApiError {
+  return new ApiError(
+    status,
+    errorData.detail || errorData.message || `Error ${status}`,
+    errorData.type,
+    retryAfter,
+    errorData.errors
+  );
 }
 
 export class NetworkError extends Error {
@@ -125,12 +145,7 @@ export async function request<T>(
       const errorData = await response.json().catch(() => ({}));
       const retryAfter = response.headers.get("Retry-After") ?? undefined;
 
-      throw new ApiError(
-        response.status,
-        errorData.detail || errorData.message || `Error ${response.status}`,
-        errorData.type,
-        retryAfter
-      );
+      throw buildApiError(response.status, errorData, retryAfter);
     }
 
     const data = (await response.json()) as T;
@@ -146,7 +161,7 @@ export async function request<T>(
       throw new NetworkError("Tiempo de espera agotado");
     }
 
-    if (err instanceof TypeError && err.message.includes("fetch")) {
+    if (err instanceof TypeError) {
       throw new NetworkError("Error de conexión de red");
     }
 
@@ -192,10 +207,9 @@ async function refreshTokens(): Promise<string> {
       if (!response.ok) {
         // Otro fallo del servidor (429, 5xx…): conservar tokens, no rechazar sesión.
         const errorData = await response.json().catch(() => ({}));
-        throw new ApiError(
+        throw buildApiError(
           response.status,
-          errorData.detail || errorData.message || `Error ${response.status}`,
-          errorData.type,
+          errorData,
           response.headers.get("Retry-After") ?? undefined
         );
       }
@@ -215,7 +229,7 @@ async function refreshTokens(): Promise<string> {
       if (err instanceof DOMException && err.name === "AbortError") {
         throw new NetworkError("Tiempo de espera agotado al renovar la sesión");
       }
-      if (err instanceof TypeError && err.message.includes("fetch")) {
+      if (err instanceof TypeError) {
         // Fallo de red: conservar tokens para poder reintentar más tarde.
         throw new NetworkError("Sin conexión al renovar la sesión");
       }
@@ -301,6 +315,105 @@ export async function updateSolicitudState(
     `/api/rooms/${roomId}/requests/${solicitudId}`,
     { body: { estado, version } }
   );
+}
+
+// --- Perfil del DJ ---
+
+export async function getMyProfile(): Promise<ProfileResponse> {
+  return await request<ProfileResponse>("GET", "/api/dj/profile");
+}
+
+export async function updateMyProfile(
+  payload: UpdateProfileRequest
+): Promise<ProfileResponse> {
+  return await request<ProfileResponse>("PATCH", "/api/dj/profile", {
+    body: payload,
+  });
+}
+
+export async function deleteProfilePhoto(): Promise<ProfileResponse> {
+  return await request<ProfileResponse>("DELETE", "/api/dj/profile/photo");
+}
+
+export async function uploadProfilePhoto(
+  photo: ProfilePhotoUpload
+): Promise<ProfileResponse> {
+  return await sendMultipart<ProfileResponse>("/api/dj/profile/photo", photo);
+}
+
+async function sendMultipart<T>(
+  path: string,
+  photo: ProfilePhotoUpload,
+  retryCount = 0
+): Promise<T> {
+  const authHeaders = await getAuthHeaders();
+  const form = new FormData();
+
+  if (photo.file) {
+    form.append("file", photo.file, photo.name);
+  } else {
+    form.append(
+      "file",
+      { uri: photo.uri, name: photo.name, type: photo.type } as unknown as Blob
+    );
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method: "POST",
+      headers: authHeaders,
+      body: form,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (response.status === 401 && retryCount === 0) {
+      await refreshTokens();
+      return sendMultipart<T>(path, photo, 1);
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw buildApiError(
+        response.status,
+        errorData,
+        response.headers.get("Retry-After") ?? undefined
+      );
+    }
+
+    return (await response.json()) as T;
+  } catch (err) {
+    clearTimeout(timeoutId);
+
+    if (err instanceof ApiError || err instanceof NetworkError) {
+      throw err;
+    }
+
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new NetworkError("Tiempo de espera agotado");
+    }
+
+    if (err instanceof TypeError) {
+      throw new NetworkError("Error de conexión de red");
+    }
+
+    throw err instanceof Error ? err : new NetworkError("Error desconocido");
+  }
+}
+
+export function resolveMediaUrl(url: string | null | undefined): string | null {
+  if (!url) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+
+  return `${BASE_URL}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
 export { BASE_URL };

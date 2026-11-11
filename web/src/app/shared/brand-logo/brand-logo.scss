@@ -1,0 +1,94 @@
+:host {
+  display: inline-flex;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--djr-primary);
+}
+
+.brand--hero {
+  flex-direction: column;
+  gap: var(--djr-space-3);
+}
+
+.brand__mark {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+}
+
+.brand--hero .brand__mark {
+  width: 88px;
+  height: 88px;
+}
+
+.brand__symbol {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+}
+
+.brand__waves {
+  position: absolute;
+  z-index: 0;
+  top: -80%;
+  left: -80%;
+  width: 260%;
+  height: 260%;
+  overflow: visible;
+}
+
+.brand__wave {
+  fill: none;
+  stroke: var(--djr-primary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  transform-origin: 120px 120px;
+  animation: djr-brand-wave 3s ease-out both;
+}
+
+.brand__wave--outer {
+  opacity: 0.2;
+}
+
+.brand__wave--middle {
+  opacity: 0.14;
+  animation-delay: 80ms;
+}
+
+.brand__wave--inner {
+  opacity: 0.09;
+  animation-delay: 160ms;
+}
+
+.brand__wordmark {
+  color: var(--djr-text-primary);
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.brand--hero .brand__wordmark {
+  font-size: 1.625rem;
+}
+
+@keyframes djr-brand-wave {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand__wave {
+    animation: none;
+  }
+}

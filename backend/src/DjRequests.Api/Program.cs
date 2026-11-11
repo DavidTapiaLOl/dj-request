@@ -9,6 +9,9 @@ using DjRequests.Api.Modules.Guests.Endpoints;
 using DjRequests.Api.Modules.Guests.Options;
 using DjRequests.Api.Modules.Guests.Services;
 using DjRequests.Api.Modules.Health;
+using DjRequests.Api.Modules.Profiles.Endpoints;
+using DjRequests.Api.Modules.Profiles.Options;
+using DjRequests.Api.Modules.Profiles.Services;
 using DjRequests.Api.Modules.Requests.Endpoints;
 using DjRequests.Api.Modules.Requests.Services;
 using DjRequests.Api.Modules.Rooms.Options;
@@ -19,6 +22,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -33,6 +37,14 @@ builder.Services.AddDbContext<DjRequestsDbContext>(options =>
 });
 
 builder.Services.AddProblemDetails();
+
+builder.Services.Configure<FormOptions>(options =>
+{
+    var maxFileSize = builder.Configuration
+        .GetSection(FileStorageOptions.SectionName)
+        .GetValue<int?>("MaxFileSizeBytes") ?? 5 * 1024 * 1024;
+    options.MultipartBodyLengthLimit = maxFileSize + (1024 * 1024);
+});
 
 builder.Services.AddIdentity<DjAccount, IdentityRole<Guid>>(options =>
 {
@@ -193,6 +205,16 @@ builder.Services.AddSingleton<IRoomCodeGenerator, RoomCodeGenerator>();
 builder.Services.AddSingleton<IGuestTokenGenerator, GuestTokenGenerator>();
 builder.Services.AddScoped<IGuestSessionService, GuestSessionService>();
 builder.Services.AddScoped<ISolicitudService, SolicitudService>();
+
+builder.Services.AddOptions<FileStorageOptions>()
+    .Bind(builder.Configuration.GetSection(FileStorageOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.Path), "FileStorage:Path es obligatorio.")
+    .Validate(o => o.MaxFileSizeBytes > 0, "FileStorage:MaxFileSizeBytes debe ser positivo.")
+    .Validate(o => o.MaxDimensionPx >= 256, "FileStorage:MaxDimensionPx debe ser al menos 256.")
+    .Validate(o => o.MaxSourcePixels > 0, "FileStorage:MaxSourcePixels debe ser positivo.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<IFileStorage, FileStorage>();
+builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.Configure<TimeZoneValidatorOptions>(
     config => config.DefaultTimezone = "America/Mexico_City");
 
@@ -272,6 +294,7 @@ app.MapAuthEndpoints();
 app.MapRoomEndpoints();
 app.MapGuestEndpoints();
 app.MapSolicitudEndpoints();
+app.MapProfileEndpoints();
 
 app.Run();
 public partial class Program { }

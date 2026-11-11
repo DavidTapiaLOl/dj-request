@@ -1,15 +1,17 @@
 <main class="page">
   <header class="topbar">
-    <a class="topbar__brand" routerLink="/">DJ Requests</a>
+    <a class="topbar__brand" routerLink="/" aria-label="DJ Requests, volver al inicio">
+      <app-brand-logo />
+    </a>
+
     @if (!sessionExpired()) {
-      <button
-        class="button button--ghost"
-        type="button"
-        (click)="refresh()"
-        [disabled]="loadingRoom() || loadingList()"
-      >
-        {{ loadingRoom() || loadingList() ? 'Actualizando…' : 'Actualizar' }}
-      </button>
+      @if (room(); as currentRoom) {
+        <a class="topbar__dj-link" [routerLink]="['/room', currentRoom.id, 'dj']">
+          Conoce al DJ
+        </a>
+      } @else {
+        <span class="topbar__spacer" aria-hidden="true"></span>
+      }
     }
   </header>
 
@@ -17,7 +19,7 @@
     <section class="panel notice" role="alert">
       <h1>Tu sesión expiró</h1>
       <p>Vuelve a entrar con el código de la sala para seguir viendo y enviando canciones.</p>
-      <a class="button button--primary" routerLink="/">Volver a entrar</a>
+      <a class="button button--primary" routerLink="/join">Volver a entrar</a>
     </section>
   } @else if (roomError()) {
     <section class="panel notice">
@@ -31,72 +33,91 @@
       <p>Cargando la sala…</p>
     </section>
   } @else if (room(); as currentRoom) {
-    <section class="panel room">
+    <section class="room-intro">
+      <p class="eyebrow">ESTÁS EN LA SALA</p>
       <div class="room__heading">
-        <div>
-          <h1 class="room__title">{{ currentRoom.name }}</h1>
-          <p class="room__meta">{{ schedule() }} · {{ currentRoom.timezone }}</p>
-        </div>
+        <h1 class="room__title">{{ currentRoom.name }}</h1>
         <span [class]="roomStateClass()">{{ roomState() }}</span>
       </div>
+      @if (djName()) {
+        <p class="room__dj">Música por {{ djName() }}</p>
+      }
+      <p class="room__meta">{{ schedule() }}</p>
     </section>
 
-    <section class="panel">
-      <h2 class="section__title">Pedir una canción</h2>
+    <section class="panel request">
+      <h2 class="section__title">¿Qué quieres escuchar?</h2>
 
       @if (unavailableReason(); as reason) {
         <p class="notice-text" role="status">{{ reason }}</p>
       } @else {
         <form class="form" [formGroup]="form" (ngSubmit)="onSubmit()" novalidate>
           <div class="form__grid">
-            <label class="field field--wide">
-              <span class="field__label">Canción *</span>
+            <div class="field field--wide">
+              <label class="sr-only" for="song-name">Nombre de la canción</label>
               <input
+                id="song-name"
                 class="field__input"
                 [class.field__input--invalid]="showError('nombre')"
                 type="text"
                 formControlName="nombre"
                 maxlength="200"
                 autocomplete="off"
+                aria-required="true"
+                [attr.aria-describedby]="showError('nombre') ? 'song-name-error' : null"
+                placeholder="Nombre de la canción *"
               />
               @if (showError('nombre')) {
-                <span class="field__error" role="alert">{{ errorFor('nombre') }}</span>
+                <span id="song-name-error" class="field__error" role="alert">
+                  {{ errorFor('nombre') }}
+                </span>
               }
-            </label>
+            </div>
 
-            <label class="field">
-              <span class="field__label">Artista</span>
+            <div class="field">
+              <label class="sr-only" for="song-artist">Artista (opcional)</label>
               <input
+                id="song-artist"
                 class="field__input"
                 [class.field__input--invalid]="showError('artista')"
                 type="text"
                 formControlName="artista"
                 maxlength="200"
                 autocomplete="off"
+                [attr.aria-describedby]="showError('artista') ? 'song-artist-error' : null"
+                placeholder="Artista (opcional)"
               />
               @if (showError('artista')) {
-                <span class="field__error" role="alert">{{ errorFor('artista') }}</span>
+                <span id="song-artist-error" class="field__error" role="alert">
+                  {{ errorFor('artista') }}
+                </span>
               }
-            </label>
+            </div>
 
-            <label class="field">
-              <span class="field__label">Género</span>
-              <select class="field__select" formControlName="generoId">
-                <option [ngValue]="null">Sin género</option>
+            <div class="field">
+              <label class="sr-only" for="song-genre">Género (opcional)</label>
+              <select
+                id="song-genre"
+                class="field__select"
+                formControlName="generoId"
+                [attr.aria-describedby]="genresError() ? 'genre-help' : null"
+              >
+                <option [ngValue]="null">Género (opcional)</option>
                 @for (genero of genres(); track genero.id) {
                   <option [ngValue]="genero.id">{{ genero.nombre }}</option>
                 }
               </select>
               @if (genresError()) {
-                <span class="field__help">
+                <span id="genre-help" class="field__help">
                   No se pudieron cargar los géneros; el género es opcional.
                 </span>
               }
-            </label>
+            </div>
 
-            <label class="field field--wide">
-              <span class="field__label">Enlace</span>
+            <div class="field field--wide">
+              <label class="sr-only" for="song-link">Enlace de la canción (opcional)</label>
               <input
+                id="song-link"
                 class="field__input"
                 [class.field__input--invalid]="showError('enlace')"
                 type="url"
@@ -104,13 +125,18 @@
                 maxlength="2048"
                 inputmode="url"
                 autocomplete="off"
-                placeholder="https://..."
+                [attr.aria-describedby]="showError('enlace') ? 'song-link-error song-link-help' : 'song-link-help'"
+                placeholder="Enlace de la canción (opcional)"
               />
-              <span class="field__help">Opcional. Debe empezar por http:// o https://.</span>
+              <span id="song-link-help" class="sr-only">
+                Debe empezar por http:// o https://.
+              </span>
               @if (showError('enlace')) {
-                <span class="field__error" role="alert">{{ errorFor('enlace') }}</span>
+                <span id="song-link-error" class="field__error" role="alert">
+                  {{ errorFor('enlace') }}
+                </span>
               }
-            </label>
+            </div>
           </div>
 
           @if (submitError()) {
@@ -120,17 +146,36 @@
             <p class="form__success" role="status">{{ submitSuccess() }}</p>
           }
 
-          <button class="button button--primary" type="submit" [disabled]="submitting()">
-            {{ submitting() ? 'Enviando…' : 'Enviar canción' }}
+          <p class="request__note">Solo el nombre de la canción es obligatorio.</p>
+
+          <button class="button button--primary button--full" type="submit" [disabled]="submitting()">
+            {{ submitting() ? 'Enviando…' : 'Enviar solicitud' }}
           </button>
         </form>
       }
     </section>
 
-    <section class="panel">
+    <section class="panel requests">
       <div class="list__heading">
-        <h2 class="section__title">Canciones de la sala</h2>
-        <span class="list__count">{{ totalCount() }}</span>
+        <div class="list__title">
+          <h2 class="section__title">Solicitudes de la sala</h2>
+          <span
+            class="list__count"
+            [attr.aria-label]="totalCount() + ' solicitudes'"
+          >
+            {{ totalCount() }}
+          </span>
+        </div>
+        <button
+          class="icon-button"
+          type="button"
+          aria-label="Actualizar solicitudes"
+          title="Actualizar solicitudes"
+          (click)="refresh()"
+          [disabled]="loadingRoom() || loadingList()"
+        >
+          <span class="refresh-icon" aria-hidden="true">↻</span>
+        </button>
       </div>
 
       @if (listError()) {
@@ -156,12 +201,6 @@
                 @if (solicitud.artista) {
                   <p class="song__artist">{{ solicitud.artista }}</p>
                 }
-                <p class="song__meta">
-                  @if (solicitud.generoNombre) {
-                    <span>{{ solicitud.generoNombre }}</span>
-                  }
-                  <span>{{ createdLabel(solicitud.createdAt) }}</span>
-                </p>
                 @if (solicitud.enlace) {
                   <a
                     class="song__link"
@@ -189,6 +228,8 @@
           </button>
         }
       }
+
+      <p class="requests__note">Enviar una solicitud no garantiza que se reproduzca.</p>
     </section>
   }
 </main>

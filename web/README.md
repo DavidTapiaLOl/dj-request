@@ -42,14 +42,18 @@ npm test -- --watch=false
 ```
 
 - Build: `dist/dj-requests-web`.
-- Pruebas: Vitest, 3 archivos y 14 pruebas (sesión por sala, formulario, normalización, idempotencia, cuota y paginación).
+- Pruebas: Vitest, 7 archivos y 29 pruebas (bienvenida, ingreso manual/por enlace, sesión por sala, formulario, normalización, idempotencia, cuota, paginación y perfil del DJ).
 
 ## Rutas
 
-- `/`: entrada manual del código.
+- `/`: bienvenida de invitados; no crea sesión ni llama a la API.
+- `/join`: entrada manual del código.
 - `/join/:code`: entrada por enlace o QR; intenta unirse automáticamente.
 - `/room/:roomId`: sala del invitado; exige una sesión válida para esa sala.
+- `/room/:roomId/dj`: perfil público del DJ de la sala.
 - `*`: página no encontrada.
+
+La identidad visual usa la marca de `../docs/brand/dj-requests-mark.svg` y las reglas de `../docs/DESIGN_SYSTEM.md`. El formulario de solicitudes usa etiquetas `.sr-only` con placeholders visibles según el mockup aprobado; los errores y la nota de obligatoriedad siguen siendo visibles.
 
 ## Sesión e idempotencia
 
@@ -64,6 +68,7 @@ npm test -- --watch=false
 
 - `POST /api/guest-sessions`
 - `GET /api/guest/rooms/{roomId}`
+- `GET /api/guest/rooms/{roomId}/dj`
 - `POST /api/guest/rooms/{roomId}/requests`
 - `GET /api/guest/rooms/{roomId}/requests?page&pageSize`
 - `GET /api/generos` (catálogo activo, solo lectura)

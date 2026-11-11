@@ -2,7 +2,13 @@ import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { API_BASE } from './api-config';
-import { CreateSolicitudPayload, GuestRoomResponse, Solicitud, SolicitudPage } from './models';
+import {
+  CreateSolicitudPayload,
+  DjProfile,
+  GuestRoomResponse,
+  Solicitud,
+  SolicitudPage,
+} from './models';
 
 @Injectable({ providedIn: 'root' })
 export class GuestRoomService {
@@ -23,6 +29,12 @@ export class GuestRoomService {
 
   createRequest(roomId: string, guestToken: string, payload: CreateSolicitudPayload): Observable<Solicitud> {
     return this.http.post<Solicitud>(`${API_BASE}/guest/rooms/${roomId}/requests`, payload, {
+      headers: guestHeaders(guestToken),
+    });
+  }
+
+  getDjProfile(roomId: string, guestToken: string): Observable<DjProfile> {
+    return this.http.get<DjProfile>(`${API_BASE}/guest/rooms/${roomId}/dj`, {
       headers: guestHeaders(guestToken),
     });
   }

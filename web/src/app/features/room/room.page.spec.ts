@@ -58,9 +58,30 @@ function makePage(items: Solicitud[], page = 1, hasMore = false): SolicitudPage 
   return { items, page, pageSize: 20, totalCount: items.length, hasMore };
 }
 
+function makeProfile() {
+  return {
+    artistName: 'DJ Prueba',
+    description: null,
+    startYear: null,
+    photoUrl: null,
+    socialLinks: {
+      instagram: null,
+      facebook: null,
+      tiktok: null,
+      youtube: null,
+      soundcloud: null,
+    },
+  };
+}
+
 describe('RoomPage', () => {
   let sessions: { getForRoom: MockFn; clear: MockFn; updateExpiry: MockFn; save: MockFn };
-  let rooms: { getRoom: MockFn; listRequests: MockFn; createRequest: MockFn };
+  let rooms: {
+    getRoom: MockFn;
+    listRequests: MockFn;
+    createRequest: MockFn;
+    getDjProfile: MockFn;
+  };
   let genres: { list: MockFn };
 
   function createComponent(): RoomPage {
@@ -79,6 +100,7 @@ describe('RoomPage', () => {
       getRoom: vi.fn().mockReturnValue(of({ room: makeRoom(), expiresAt: makeRoom().endsAt })),
       listRequests: vi.fn().mockReturnValue(of(makePage([]))),
       createRequest: vi.fn(),
+      getDjProfile: vi.fn().mockReturnValue(of(makeProfile())),
     };
     genres = { list: vi.fn().mockReturnValue(of([{ id: 1, nombre: 'Pop' }])) };
 
@@ -224,5 +246,28 @@ describe('RoomPage', () => {
 
     expect(component.sessionExpired()).toBe(true);
     expect(rooms.getRoom).not.toHaveBeenCalled();
+  });
+
+  it('loads the DJ artist name without blocking the room', async () => {
+    const component = createComponent();
+
+    await component.init();
+
+    expect(component.djName()).toBe('DJ Prueba');
+    expect(rooms.getDjProfile).toHaveBeenCalledWith(ROOM_ID, 'guest-token');
+  });
+
+  it('keeps the room usable when the DJ profile cannot be loaded', async () => {
+    rooms.getDjProfile.mockReturnValue(
+      throwError(() => new HttpErrorResponse({ status: 500 })),
+    );
+    const component = createComponent();
+
+    await component.init();
+
+    expect(component.room()?.name).toBe('Sala de prueba');
+    expect(component.djName()).toBeNull();
+    expect(component.roomError()).toBeNull();
+    expect(component.sessionExpired()).toBe(false);
   });
 });

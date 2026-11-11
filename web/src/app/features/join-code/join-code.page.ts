@@ -5,12 +5,13 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { mapHttpError } from '../../core/api-error';
 import { GuestSessionService, normalizeCode } from '../../core/guest-session.service';
+import { BrandLogo } from '../../shared/brand-logo/brand-logo';
 
 const CODE_PATTERN = /^[A-HJ-NP-Z2-9]{10}$/;
 
 @Component({
   selector: 'app-join-code',
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule, RouterLink, BrandLogo],
   templateUrl: './join-code.page.html',
   styleUrl: './join-code.page.scss',
 })
@@ -27,7 +28,6 @@ export class JoinCodePage implements OnInit {
   readonly submitted = signal(false);
   readonly joining = signal(false);
   readonly errorMessage = signal<string | null>(null);
-  readonly fromLink = signal(false);
 
   private starting = false;
 
@@ -35,7 +35,6 @@ export class JoinCodePage implements OnInit {
     const code = this.route.snapshot.paramMap.get('code');
     if (!code) return;
 
-    this.fromLink.set(true);
     const normalized = normalizeCode(code);
     this.form.controls.code.setValue(normalized);
     void this.enter(normalized);

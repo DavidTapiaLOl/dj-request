@@ -16,6 +16,7 @@ public class DjRequestsDbContext : IdentityDbContext<DjAccount, IdentityRole<Gui
     public DbSet<Genero> Generos { get; set; } = null!;
     public DbSet<Solicitud> Solicitudes { get; set; } = null!;
     public DbSet<PlaylistCompartida> PlaylistsCompartidas { get; set; } = null!;
+    public DbSet<DjProfile> PerfilesDj { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

@@ -22,13 +22,14 @@ import {
   RoomMinimal,
   Solicitud,
 } from '../../core/models';
+import { BrandLogo } from '../../shared/brand-logo/brand-logo';
 
 const HTTP_URL_PATTERN = /^https?:\/\/\S+$/i;
 const PAGE_SIZE = 20;
 
 @Component({
   selector: 'app-room',
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule, RouterLink, BrandLogo],
   templateUrl: './room.page.html',
   styleUrl: './room.page.scss',
 })
@@ -47,6 +48,7 @@ export class RoomPage implements OnInit {
   });
 
   readonly room = signal<RoomMinimal | null>(null);
+  readonly djName = signal<string | null>(null);
   readonly items = signal<Solicitud[]>([]);
   readonly genres = signal<Genero[]>([]);
   readonly totalCount = signal(0);
@@ -90,9 +92,6 @@ export class RoomPage implements OnInit {
     if (room.state === 'cerrada') {
       return 'La sala está cerrada y ya no admite solicitudes.';
     }
-    if (Date.parse(room.endsAt) <= Date.now()) {
-      return 'El evento ya finalizó y no admite solicitudes.';
-    }
     return 'La sala no está recibiendo solicitudes en este momento.';
   });
 
@@ -118,7 +117,12 @@ export class RoomPage implements OnInit {
       return;
     }
 
-    await Promise.all([this.loadRoom(), this.loadGenres(), this.reloadList()]);
+    await Promise.all([
+      this.loadRoom(),
+      this.loadGenres(),
+      this.reloadList(),
+      this.loadDjName(),
+    ]);
   }
 
   async refresh(): Promise<void> {
@@ -271,6 +275,19 @@ export class RoomPage implements OnInit {
       this.genresError.set(false);
     } catch {
       this.genresError.set(true);
+    }
+  }
+
+  private async loadDjName(): Promise<void> {
+    if (!this.session) return;
+
+    try {
+      const profile = await firstValueFrom(
+        this.rooms.getDjProfile(this.session.room.id, this.session.guestToken),
+      );
+      this.djName.set(profile.artistName.trim() || null);
+    } catch {
+      this.djName.set(null);
     }
   }
 

@@ -1,8 +1,8 @@
 using System.Security.Cryptography;
+using DjRequests.Api.Modules.Guests.Services;
 using DjRequests.Api.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.EntityFrameworkCore;
 
 namespace DjRequests.Api.Modules.Guests.Endpoints;
 
@@ -18,7 +18,11 @@ public sealed class GuestSessionValidationMiddleware
         _next = next;
     }
 
-    public async Task InvokeAsync(HttpContext context, DjRequestsDbContext dbContext)
+    public async Task InvokeAsync(
+        HttpContext context,
+        DjRequestsDbContext dbContext,
+        IGuestSessionService sessionService,
+        TimeProvider timeProvider)
     {
         var endpoint = context.GetEndpoint();
         if (endpoint is null)
@@ -27,16 +31,21 @@ public sealed class GuestSessionValidationMiddleware
             return;
         }
 
-        var isGuestGet = endpoint.Metadata.OfType<EndpointNameMetadata>().Any(m => m.EndpointName == "GetGuestRoom");
+        var isGuestGet = endpoint.Metadata.OfType<EndpointNameMetadata>().Any(m =>
+            m.EndpointName is "GetGuestRoom" or "GetGuestDjProfile");
         if (isGuestGet)
         {
-            await ValidateGuestTokenForGet(context, dbContext);
+            await ValidateGuestTokenForGet(context, dbContext, sessionService, timeProvider);
         }
 
         await _next(context);
     }
 
-    private static async Task ValidateGuestTokenForGet(HttpContext context, DjRequestsDbContext dbContext)
+    private static async Task ValidateGuestTokenForGet(
+        HttpContext context,
+        DjRequestsDbContext dbContext,
+        IGuestSessionService sessionService,
+        TimeProvider timeProvider)
     {
         if (!context.Request.Headers.TryGetValue(GuestTokenHeaderName, out var tokenHeader) ||
             string.IsNullOrWhiteSpace(tokenHeader))
@@ -63,25 +72,27 @@ public sealed class GuestSessionValidationMiddleware
 
         var tokenHash = ComputeTokenHash(tokenBytes);
 
-        var session = await dbContext.SesionesInvitado
-            .AsNoTracking()
-            .SingleOrDefaultAsync(s => s.TokenHash == tokenHash);
-
-        if (session is null)
+        if (!Guid.TryParse(context.Request.RouteValues["roomId"]?.ToString(), out var roomId))
         {
             context.Items["GuestRateLimitPartition"] = GetClientIp(context);
             context.Items["GuestSessionValid"] = false;
             return;
         }
 
-        var routeRoomId = context.Request.RouteValues["roomId"] as Guid?;
-        if (routeRoomId.HasValue && session.SalaId != routeRoomId.Value)
+        var validation = await sessionService.ValidateSessionAsync(
+            tokenHash,
+            roomId,
+            timeProvider,
+            dbContext,
+            context.RequestAborted);
+        if (validation.Status != GuestSessionStatus.Valid || validation.Session is null)
         {
             context.Items["GuestRateLimitPartition"] = GetClientIp(context);
             context.Items["GuestSessionValid"] = false;
             return;
         }
 
+        var session = validation.Session;
         var partitionKey = string.Format("session:{0}:{1}", session.SalaId, session.Id);
         context.Items["GuestRateLimitPartition"] = partitionKey;
         context.Items["GuestSessionValid"] = true;

@@ -1,0 +1,33 @@
+<main class="page">
+  <header class="topbar">
+    <app-brand-logo />
+  </header>
+
+  <section class="welcome" aria-labelledby="welcome-title">
+    <app-brand-logo variant="hero" [showWordmark]="false" />
+
+    <p class="eyebrow">MÚSICA A TU MANERA</p>
+    <h1 id="welcome-title" class="welcome__title">Tu canción.<br />Tu momento.</h1>
+    <p class="welcome__lede">Pide tu canción sin acercarte a la cabina.</p>
+
+    <ol class="steps">
+      <li class="step">
+        <span class="step__number" aria-hidden="true">01</span>
+        <span class="step__text">Entra con el código</span>
+      </li>
+      <li class="step">
+        <span class="step__number" aria-hidden="true">02</span>
+        <span class="step__text">Envía tu canción</span>
+      </li>
+      <li class="step">
+        <span class="step__number" aria-hidden="true">03</span>
+        <span class="step__text">Disfruta el evento</span>
+      </li>
+    </ol>
+
+    <a class="button button--primary welcome__cta" routerLink="/join">Ingresar código</a>
+    <p class="welcome__fine">Sin registro. Sin complicaciones.</p>
+  </section>
+
+  <p class="footer">El DJ decide qué suena y cuándo.</p>
+</main>

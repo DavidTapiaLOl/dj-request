@@ -4,6 +4,8 @@ using DjRequests.Api.Modules.Common;
 using DjRequests.Api.Modules.Guests.Dtos;
 using DjRequests.Api.Modules.Guests.Options;
 using DjRequests.Api.Modules.Guests.Services;
+using DjRequests.Api.Modules.Profiles.Dtos;
+using DjRequests.Api.Modules.Profiles.Services;
 using DjRequests.Api.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Extensions;
@@ -43,6 +45,59 @@ public static class GuestEndpoints
             .Produces<GuestRoomResponse>(StatusCodes.Status200OK)
             .Produces<ProblemDetails>(StatusCodes.Status401Unauthorized)
             .Produces<ProblemDetails>(StatusCodes.Status404NotFound);
+
+        group.MapGet("/rooms/{roomId:guid}/dj", GetDjProfileAsync)
+            .WithName("GetGuestDjProfile")
+            .RequireRateLimiting("guest-get")
+            .Produces<ProfileDto>(StatusCodes.Status200OK)
+            .Produces<ProblemDetails>(StatusCodes.Status401Unauthorized)
+            .Produces<ProblemDetails>(StatusCodes.Status404NotFound);
+    }
+
+    private static bool TryGetGuestTokenHash(
+        HttpContext httpContext,
+        out string tokenHash,
+        out IResult? problem)
+    {
+        tokenHash = string.Empty;
+        problem = null;
+
+        if (!httpContext.Request.Headers.TryGetValue(GuestTokenHeaderName, out var tokenHeader) ||
+            string.IsNullOrWhiteSpace(tokenHeader))
+        {
+            problem = GuestUnauthorizedProblem("Credencial de invitado requerida.");
+            return false;
+        }
+
+        var token = tokenHeader.ToString();
+
+        if (httpContext.Request.Headers[GuestTokenHeaderName].Count > 1 ||
+            !IsValidBase64UrlToken(token, out var tokenBytes))
+        {
+            problem = GuestUnauthorizedProblem("Credencial de invitado invalida.");
+            return false;
+        }
+
+        tokenHash = ComputeTokenHash(tokenBytes);
+        return true;
+    }
+
+    private static IResult GuestUnauthorizedProblem(string detail)
+    {
+        return NoStoreResults.AddNoStore(Results.Problem(
+            detail: detail,
+            statusCode: StatusCodes.Status401Unauthorized,
+            title: "No autorizado",
+            type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2"));
+    }
+
+    private static IResult GuestRoomNotFoundProblem()
+    {
+        return NoStoreResults.AddNoStore(Results.Problem(
+            detail: "Sala no encontrada.",
+            statusCode: StatusCodes.Status404NotFound,
+            title: "Sala no encontrada",
+            type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5"));
     }
 
     private static bool IsValidCode(string? code)
@@ -260,55 +315,20 @@ public static class GuestEndpoints
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
-        if (!httpContext.Request.Headers.TryGetValue(GuestTokenHeaderName, out var tokenHeader) ||
-            string.IsNullOrWhiteSpace(tokenHeader))
+        if (!TryGetGuestTokenHash(httpContext, out var tokenHash, out var tokenProblem))
         {
-            var problem = Results.Problem(
-                detail: "Credencial de invitado requerida.",
-                statusCode: StatusCodes.Status401Unauthorized,
-                title: "No autorizado",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
-            return NoStoreResults.AddNoStore(problem);
+            return tokenProblem!;
         }
-
-        var token = tokenHeader.ToString();
-
-        if (httpContext.Request.Headers[GuestTokenHeaderName].Count > 1 ||
-            !IsValidBase64UrlToken(token, out var tokenBytes))
-        {
-            var problem = Results.Problem(
-                detail: "Credencial de invitado invalida.",
-                statusCode: StatusCodes.Status401Unauthorized,
-                title: "No autorizado",
-                type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
-            return NoStoreResults.AddNoStore(problem);
-        }
-
-        var tokenHash = ComputeTokenHash(tokenBytes);
 
         var result = await sessionService.ValidateSessionAsync(tokenHash, roomId, timeProvider, context, cancellationToken);
 
         switch (result.Status)
         {
             case GuestSessionStatus.Unauthorized:
-                {
-                    var problem = Results.Problem(
-                        detail: "Credencial de invitado invalida, revocada o expirada.",
-                        statusCode: StatusCodes.Status401Unauthorized,
-                        title: "No autorizado",
-                        type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2");
-                    return NoStoreResults.AddNoStore(problem);
-                }
+                return GuestUnauthorizedProblem("Credencial de invitado invalida, revocada o expirada.");
 
             case GuestSessionStatus.RoomNotFound:
-                {
-                    var problem = Results.Problem(
-                        detail: "Sala no encontrada.",
-                        statusCode: StatusCodes.Status404NotFound,
-                        title: "Sala no encontrada",
-                        type: "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5");
-                    return NoStoreResults.AddNoStore(problem);
-                }
+                return GuestRoomNotFoundProblem();
 
             default:
                 {
@@ -324,6 +344,44 @@ public static class GuestEndpoints
 
                     var ok = Results.Ok(response);
                     return NoStoreResults.AddNoStore(ok);
+                }
+        }
+    }
+
+    #endregion
+
+    #region GET /api/guest/rooms/{roomId}/dj
+
+    private static async Task<IResult> GetDjProfileAsync(
+        Guid roomId,
+        HttpContext httpContext,
+        IGuestSessionService sessionService,
+        IProfileService profileService,
+        DjRequestsDbContext context,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetGuestTokenHash(httpContext, out var tokenHash, out var tokenProblem))
+        {
+            return tokenProblem!;
+        }
+
+        var result = await sessionService.ValidateSessionAsync(tokenHash, roomId, timeProvider, context, cancellationToken);
+
+        switch (result.Status)
+        {
+            case GuestSessionStatus.Unauthorized:
+                return GuestUnauthorizedProblem("Credencial de invitado invalida, revocada o expirada.");
+
+            case GuestSessionStatus.RoomNotFound:
+                return GuestRoomNotFoundProblem();
+
+            default:
+                {
+                    var sala = result.Sala!;
+                    var dj = sala.Dj!;
+                    var profile = await profileService.GetByDjIdAsync(sala.DjId, dj, cancellationToken);
+                    return NoStoreResults.AddNoStore(Results.Ok(profile));
                 }
         }
     }

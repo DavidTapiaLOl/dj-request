@@ -6,45 +6,46 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: var(--djr-space-4);
+  gap: var(--djr-space-5);
   min-height: 100dvh;
-  padding: var(--djr-space-5) var(--djr-space-4);
+  padding: 20px 20px 28px;
 }
 
-.panel {
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
-  max-width: 26rem;
+  max-width: 32rem;
 }
 
-.brand {
-  margin-bottom: var(--djr-space-5);
-  text-align: center;
+.topbar__spacer {
+  width: 48px;
+  height: 48px;
 }
 
-.brand__mark {
-  display: inline-flex;
+.join {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 3rem;
-  height: 3rem;
-  margin-bottom: var(--djr-space-3);
-  border-radius: var(--djr-radius-card);
-  background: color-mix(in srgb, var(--djr-primary) 18%, var(--djr-surface-raised));
-  border: 1px solid var(--djr-primary);
-  color: var(--djr-primary);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  width: 100%;
+  max-width: 26rem;
+  text-align: center;
+  animation: djr-rise 250ms ease-out both;
 }
 
-.brand__title {
-  margin: 0;
-  font-size: 1.75rem;
-  letter-spacing: -0.01em;
+.join__title {
+  margin: var(--djr-space-5) 0 0;
+  font-size: clamp(1.75rem, 7vw, 2.25rem);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
 }
 
-.brand__subtitle {
-  margin: var(--djr-space-1) 0 0;
+.join__lede {
+  max-width: 20rem;
+  margin: var(--djr-space-3) 0 0;
   color: var(--djr-text-secondary);
 }
 
@@ -52,13 +53,18 @@
   display: flex;
   flex-direction: column;
   gap: var(--djr-space-4);
+  width: 100%;
+  margin-top: var(--djr-space-5);
+  text-align: left;
 }
 
 .joining {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--djr-space-3);
   min-height: 48px;
+  margin-top: var(--djr-space-5);
   color: var(--djr-text-secondary);
 }
 
@@ -66,12 +72,12 @@
   margin: 0;
 }
 
-.back-link {
+.join__help {
+  margin: var(--djr-space-4) 0 0;
   color: var(--djr-text-secondary);
-  text-decoration: none;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
-.back-link:hover {
-  color: var(--djr-text-primary);
+.button--full {
+  width: 100%;
 }

@@ -1,6 +1,6 @@
 # Diseño de datos — propuesta técnica v1
 
-PostgreSQL 17, esquema public. Fuente ejecutable: migraciones EF Core. `20261006034357_InitialCore` fue aplicada localmente a `dj_requests` por el usuario; `20261016003450_SalaVersionConcurrencyToken` (vacía: solo anota `version` de `salas` como concurrency token en el modelo) fue generada con la Tarea 03 y **aún no aplicada**; SQL de revisión en `backend/artifacts/SalaVersionConcurrencyToken.sql`. Este documento diseña el modelo. UUID para PK; timestamptz para fechas UTC; snake_case en tablas/columnas. NOT NULL salvo marcado nullable. Longitudes se validan también en API. Restricciones con nombres explícitos.
+PostgreSQL 17, esquema public. Fuente ejecutable: migraciones EF Core. `20261006034357_InitialCore` fue aplicada localmente a `dj_requests` por el usuario; `20261016003450_SalaVersionConcurrencyToken` (vacía: solo anota `version` de `salas` como concurrency token en el modelo) y `20261108212801_AddDjProfiles` fueron generadas y **aún no aplicadas**. SQL de revisión en `backend/artifacts/SalaVersionConcurrencyToken.sql` y `backend/artifacts/AddDjProfiles.sql`. Este documento diseña el modelo. UUID para PK; timestamptz para fechas UTC; snake_case en tablas/columnas. NOT NULL salvo marcado nullable. Longitudes se validan también en API. Restricciones con nombres explícitos.
 
 ## 1. djs — identidad permanente
 Mapear DjAccount : IdentityUser<Guid> a djs. Conservar todas las propiedades necesarias de Identity (normalización, password_hash, security_stamp, concurrency_stamp, email_confirmed, bloqueo, intentos fallidos y campos de teléfono/2FA), aunque la UI inicial no use todas. No sustituirlas por un password varchar propio.
@@ -8,6 +8,22 @@ Campos de negocio: nombre_artistico varchar(100), estado varchar(16) default act
 Email requerido; exigir email normalizado único, además de índice de usuario normalizado único de Identity. UserName se establece al correo por servicio, no por datos del invitado. Mantener hash y configuración de Identity. Tabla djs contiene exclusivamente DJs; permisos de administración no se conceden aquí.
 Identity necesita tablas auxiliares de claims, logins, tokens y, si se habilitan roles, roles/relaciones. No cuentan como cuentas adicionales de invitados. Preferir mappings estándar de Identity y documentar nombres exactos generados; no eliminar campos/tablas para cumplir artificialmente el listado resumido.
 No sembrar cuentas/passwords de prueba en migración.
+
+### 1.1 perfiles_dj
+Una fila opcional por DJ. El nombre artístico permanece en `djs.nombre_artistico`; no se duplica.
+
+| Columna | Tipo | Regla |
+|---|---|---|
+| id | uuid | PK |
+| dj_id | uuid | FK djs(id), ON DELETE CASCADE, UNIQUE |
+| descripcion | varchar(1500) nullable | Texto plano; vacíos normalizados a null |
+| anio_inicio | integer nullable | CHECK entre 1900 y 2100; API limita además al año actual |
+| foto_nombre_archivo | varchar(260) nullable | Nombre interno generado; no ruta cliente ni contenido binario |
+| red_instagram / red_facebook / red_tiktok | varchar(2048) nullable | URL HTTPS validada por dominio en API |
+| red_youtube / red_soundcloud | varchar(2048) nullable | URL HTTPS validada por dominio en API |
+| created_at / updated_at | timestamptz | UTC |
+
+Índice único `IX_perfiles_dj_dj_id`. La foto se almacena fuera de PostgreSQL; la fila conserva únicamente el nombre interno. El endpoint de invitado resuelve el perfil mediante la sala y nunca acepta un `dj_id` como autoridad del cliente.
 
 ## 2. salas
 | Columna | Tipo | Regla |
@@ -82,7 +98,8 @@ Worker: buscar hasta 100 salas purge_at <= now por lote, bloquear con mecanismo 
 5. Misma idempotency_key/sesión no crea segunda fila.
 6. Borrar sala elimina contenido y sesiones; conserva DJ y catálogo.
 7. Artista/género/enlace omitidos son null; playlist sin enlace falla.
+8. Solo existe un perfil por DJ; borrar el DJ elimina su perfil; un invitado de sala A no consulta el perfil mediante una sesión de sala B.
 Pruebas API posteriores: acceso de otro DJ denegado; invitado no lee playlists; límite concurrente exacto; sala cerrada no recibe; a purge_at no hay acceso aunque worker esté detenido.
 
 ## Migraciones y aplicación
-Generar InitialCore con entidades 1–6 e Identity auxiliar. Revisar SQL antes de aplicar a dj_requests. Fases futuras crean sus propias migraciones. No usar EnsureCreated ni borrar volúmenes para resolver fallas. Tests en base independiente; jamás drop sobre dj_requests. Verificar backup antes de cambios con datos relevantes.
+`InitialCore` contiene las entidades iniciales e Identity auxiliar. `AddDjProfiles` añade únicamente `perfiles_dj`, su restricción, índice y FK. Revisar los SQL de `backend/artifacts/` antes de aplicar a `dj_requests`; la generación del archivo no significa que la migración haya sido aplicada. No usar EnsureCreated ni borrar volúmenes para resolver fallas. Tests en base independiente; jamás drop sobre dj_requests. Verificar backup antes de cambios con datos relevantes.

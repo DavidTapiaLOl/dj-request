@@ -26,6 +26,7 @@ export interface AuthContextType {
   register: (email: string, password: string, artistName?: string) => Promise<void>;
   logout: () => Promise<void>;
   getAuthHeaders: () => Promise<Record<string, string>>;
+  updateArtistName: (artistName: string) => void;
 }
 
 const AuthContext = React.createContext<AuthContextType | undefined>(undefined);
@@ -182,13 +183,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const updateArtistName = React.useCallback((artistName: string) => {
+    setUser((current) =>
+      current ? { ...current, artistName } : current
+    );
+  }, []);
+
   const logout = async () => {
     try {
       await storage.removeTokens();
       setUser(null);
       setLoginStatus("unauthenticated");
       setRestoreError(undefined);
-    } catch (error) {
+    } catch {
       // Conservar el estado de sesión local aunque falle el borrado.
     }
   };
@@ -206,6 +213,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         register,
         logout,
         getAuthHeaders: localGetAuthHeaders,
+        updateArtistName,
       }}
     >
       {children}

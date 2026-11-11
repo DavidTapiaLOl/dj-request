@@ -119,6 +119,76 @@ namespace DjRequests.Api.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("DjRequests.Api.Entities.DjProfile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int?>("AnioInicio")
+                        .HasColumnType("integer")
+                        .HasColumnName("anio_inicio");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Descripcion")
+                        .HasMaxLength(1500)
+                        .HasColumnType("character varying(1500)")
+                        .HasColumnName("descripcion");
+
+                    b.Property<Guid>("DjId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("dj_id");
+
+                    b.Property<string>("FotoNombreArchivo")
+                        .HasMaxLength(260)
+                        .HasColumnType("character varying(260)")
+                        .HasColumnName("foto_nombre_archivo");
+
+                    b.Property<string>("RedFacebook")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("red_facebook");
+
+                    b.Property<string>("RedInstagram")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("red_instagram");
+
+                    b.Property<string>("RedSoundcloud")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("red_soundcloud");
+
+                    b.Property<string>("RedTiktok")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("red_tiktok");
+
+                    b.Property<string>("RedYoutube")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("red_youtube");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DjId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_perfiles_dj_dj_id");
+
+                    b.ToTable("perfiles_dj", null, t =>
+                        {
+                            t.HasCheckConstraint("chk_perfiles_dj_anio_inicio", "anio_inicio IS NULL OR anio_inicio BETWEEN 1900 AND 2100");
+                        });
+                });
+
             modelBuilder.Entity("DjRequests.Api.Entities.Genero", b =>
                 {
                     b.Property<short>("Id")
@@ -635,6 +705,17 @@ namespace DjRequests.Api.Persistence.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("user_tokens", (string)null);
+                });
+
+            modelBuilder.Entity("DjRequests.Api.Entities.DjProfile", b =>
+                {
+                    b.HasOne("DjRequests.Api.Entities.DjAccount", "Dj")
+                        .WithOne()
+                        .HasForeignKey("DjRequests.Api.Entities.DjProfile", "DjId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Dj");
                 });
 
             modelBuilder.Entity("DjRequests.Api.Entities.PlaylistCompartida", b =>

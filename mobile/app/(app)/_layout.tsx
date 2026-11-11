@@ -50,6 +50,8 @@ export default function AppLayout() {
       <Stack.Screen name="index" options={{ title: "Mis salas" }} />
       <Stack.Screen name="create" options={{ title: "Crear sala" }} />
       <Stack.Screen name="room/[id]" options={{ title: "Sala" }} />
+      <Stack.Screen name="profile/index" options={{ title: "Mi perfil" }} />
+      <Stack.Screen name="profile/edit" options={{ title: "Editar perfil" }} />
     </Stack>
   );
 }

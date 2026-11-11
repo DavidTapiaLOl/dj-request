@@ -13,6 +13,9 @@
 **/dist/
 .expo/
 
+# Archivos subidos en desarrollo (fotos de perfil)
+backend/src/DjRequests.Api/storage/
+
 # Editor y sistema
 .idea/
 .DS_Store

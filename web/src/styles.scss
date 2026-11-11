@@ -6,6 +6,7 @@
   --djr-border: #303848;
   --djr-primary: #8b5cf6;
   --djr-primary-pressed: #7c3aed;
+  --djr-on-primary: #ffffff;
   --djr-text-primary: #f5f7fa;
   --djr-text-secondary: #a7b0c0;
   --djr-success: #4ade80;
@@ -20,7 +21,8 @@
   --djr-space-4: 16px;
   --djr-space-5: 24px;
   --djr-space-6: 32px;
-  --djr-font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --djr-font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  color-scheme: dark;
 }
 
 *,
@@ -59,14 +61,68 @@ a {
   outline-offset: 2px;
 }
 
-.button:active:not(:disabled) {
+.button:active:not(:disabled),
+.icon-button:active:not(:disabled) {
   transform: scale(0.98);
-  transition: transform 120ms ease;
+}
+
+.button--full {
+  width: 100%;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid var(--djr-border);
+  border-radius: var(--djr-radius-control);
+  background: transparent;
+  color: var(--djr-text-secondary);
+  font-size: 1.25rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.icon-button:hover:not(:disabled) {
+  border-color: var(--djr-primary);
+  color: var(--djr-text-primary);
+}
+
+.icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes djr-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .button:active:not(:disabled) {
-    transition: none;
+  .button:active:not(:disabled),
+  .icon-button:active:not(:disabled) {
+    transform: none;
   }
 }
 
@@ -109,7 +165,8 @@ a {
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
-    opacity 120ms ease;
+    opacity 120ms ease,
+    transform 120ms ease;
 }
 
 .button:disabled {
@@ -119,7 +176,7 @@ a {
 
 .button--primary {
   background: var(--djr-primary);
-  color: #ffffff;
+  color: var(--djr-on-primary);
 }
 
 .button--primary:hover:not(:disabled) {

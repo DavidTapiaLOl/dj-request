@@ -2,16 +2,24 @@ import * as React from "react";
 import {
   View,
   Text,
+  Image,
   RefreshControl,
   ScrollView,
   StyleSheet,
   ActivityIndicator,
+  Pressable,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../src/auth/provider";
-import { RoomResponse } from "../../src/api/dto";
-import { request, ApiError, NetworkError } from "@/api/client";
+import { RoomResponse, ProfileResponse } from "../../src/api/dto";
+import {
+  request,
+  ApiError,
+  NetworkError,
+  getMyProfile,
+  resolveMediaUrl,
+} from "@/api/client";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { AppButton } from "@/components/AppButton";
@@ -35,9 +43,15 @@ export default function RoomsScreen() {
   const [hasMore, setHasMore] = React.useState(true);
   const [hasCompletedInitialLoad, setHasCompletedInitialLoad] =
     React.useState(false);
+  const [profilePhotoUrl, setProfilePhotoUrl] = React.useState<string | null>(
+    null
+  );
+  const [photoFailed, setPhotoFailed] = React.useState(false);
 
   const requestIdRef = React.useRef(0);
   const mountedRef = React.useRef(true);
+  const profileRequestIdRef = React.useRef(0);
+  const profileRequestRef = React.useRef<Promise<ProfileResponse> | null>(null);
 
   React.useEffect(() => {
     mountedRef.current = true;
@@ -45,6 +59,40 @@ export default function RoomsScreen() {
       mountedRef.current = false;
     };
   }, []);
+
+  const loadProfilePhoto = React.useCallback(async () => {
+    if (loginStatus !== "authenticated") {
+      return;
+    }
+
+    const requestId = ++profileRequestIdRef.current;
+
+    try {
+      let pending = profileRequestRef.current;
+
+      if (!pending) {
+        pending = getMyProfile();
+        profileRequestRef.current = pending;
+        const clearPending = () => {
+          if (profileRequestRef.current === pending) {
+            profileRequestRef.current = null;
+          }
+        };
+        pending.then(clearPending, clearPending);
+      }
+
+      const profile = await pending;
+
+      if (!mountedRef.current || requestId !== profileRequestIdRef.current) {
+        return;
+      }
+
+      setProfilePhotoUrl(resolveMediaUrl(profile.photoUrl));
+      setPhotoFailed(false);
+    } catch {
+      // Sin foto disponible se conserva la silueta; la tarjeta no muestra errores.
+    }
+  }, [loginStatus]);
 
   const loadPage = React.useCallback(
     async (pageNum: number, reset: boolean) => {
@@ -130,6 +178,21 @@ export default function RoomsScreen() {
     }, [loginStatus, loadPage])
   );
 
+  useFocusEffect(
+    React.useCallback(() => {
+      if (loginStatus !== "authenticated") {
+        return;
+      }
+
+      loadProfilePhoto();
+
+      return () => {
+        profileRequestIdRef.current += 1;
+        profileRequestRef.current = null;
+      };
+    }, [loginStatus, loadProfilePhoto])
+  );
+
   const screenState = resolveRoomsScreenState({
     hasCompletedInitialLoad,
     isLoading,
@@ -174,6 +237,44 @@ export default function RoomsScreen() {
             <Text style={styles.greeting}>Hola, {artistLabel}</Text>
           ) : null}
           <Text style={styles.title}>Mis salas</Text>
+
+          <Pressable
+            onPress={() => router.push("/(app)/profile")}
+            accessibilityRole="button"
+            accessibilityLabel="Abrir mi perfil"
+            style={({ pressed }) => [
+              styles.profileEntry,
+              pressed && styles.profileEntryPressed,
+            ]}
+          >
+            <View style={styles.profileIcon}>
+              {profilePhotoUrl && !photoFailed ? (
+                <Image
+                  source={{ uri: profilePhotoUrl }}
+                  style={styles.profileAvatar}
+                  resizeMode="cover"
+                  onError={() => setPhotoFailed(true)}
+                />
+              ) : (
+                <Ionicons
+                  name="person-outline"
+                  size={20}
+                  color={colors.primary}
+                />
+              )}
+            </View>
+            <View style={styles.profileTexts}>
+              <Text style={styles.profileTitle}>Mi perfil</Text>
+              <Text style={styles.profileSubtitle}>
+                Lo que ven los invitados de tus salas
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={20}
+              color={colors.textSecondary}
+            />
+          </Pressable>
         </View>
 
         {screenState.showCreateBar ? (
@@ -306,6 +407,48 @@ const styles = StyleSheet.create({
   title: {
     ...typography.title,
     color: colors.textPrimary,
+  },
+  profileEntry: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    minHeight: 64,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.card,
+  },
+  profileEntryPressed: {
+    backgroundColor: colors.surfaceRaised,
+  },
+  profileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceRaised,
+    overflow: "hidden",
+  },
+  profileAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  profileTexts: {
+    flex: 1,
+  },
+  profileTitle: {
+    ...typography.cardTitle,
+    fontSize: 16,
+    color: colors.textPrimary,
+  },
+  profileSubtitle: {
+    ...typography.small,
+    color: colors.textSecondary,
+    marginTop: 2,
   },
   createBar: {
     paddingBottom: spacing.lg,

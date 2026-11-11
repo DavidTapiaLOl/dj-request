@@ -1,0 +1,120 @@
+:host {
+  display: block;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--djr-space-5);
+  min-height: 100dvh;
+  padding: 20px 20px 28px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 32rem;
+}
+
+.welcome {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 30rem;
+  text-align: center;
+  animation: djr-rise 250ms ease-out both;
+}
+
+.eyebrow {
+  margin: var(--djr-space-5) 0 0;
+  color: var(--djr-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.welcome__title {
+  margin: var(--djr-space-3) 0 0;
+  font-size: clamp(2rem, 8vw, 2.75rem);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.welcome__lede {
+  max-width: 22rem;
+  margin: var(--djr-space-4) 0 0;
+  color: var(--djr-text-secondary);
+  font-size: 1rem;
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--djr-space-2);
+  width: 100%;
+  margin: var(--djr-space-5) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--djr-space-3);
+  min-height: 48px;
+  padding: 0 var(--djr-space-4);
+  border: 1px solid var(--djr-border);
+  border-radius: var(--djr-radius-control);
+  background: color-mix(in srgb, var(--djr-surface) 82%, transparent);
+  text-align: left;
+}
+
+.step__number {
+  color: var(--djr-primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.step__text {
+  color: var(--djr-text-primary);
+  font-size: 0.9375rem;
+}
+
+.welcome__cta {
+  width: 100%;
+  margin-top: var(--djr-space-5);
+}
+
+.welcome__fine {
+  margin: var(--djr-space-3) 0 0;
+  color: var(--djr-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.footer {
+  margin: 0;
+  color: var(--djr-text-secondary);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+@media (min-width: 640px) {
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .step {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: var(--djr-space-1);
+    padding: var(--djr-space-3) var(--djr-space-4);
+  }
+}

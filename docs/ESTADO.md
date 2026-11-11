@@ -1,4 +1,37 @@
-﻿# DJ Requests — Estado de la tarea 08 (beta LAN)
+﻿# DJ Requests — Estado de la tarea 09 (rediseño web de invitados)
+
+## Resumen
+Rediseño de la web Angular de invitados según los mockups aprobados en `docs/mockups/web/`: nueva bienvenida en `/`, ingreso manual en `/join`, conservación de `/join/:code`, rediseño de sala y formulario, marca reutilizable y estados de movimiento reducido. Se conservaron sesión, contratos API, validaciones, idempotencia, paginación y navegación al perfil del DJ. No se modificaron backend, base de datos, `mobile/` ni dependencias.
+
+## Cambios
+- `web/src/app/shared/brand-logo/` — **nuevo**: marca Angular standalone con variantes `compact` y `hero`, geometría de `docs/brand/dj-requests-mark.svg` y arcos animados.
+- `web/src/app/features/welcome/` — **nuevo**: bienvenida en `/`, tres pasos y único CTA a `/join`; sin API.
+- `web/src/app/app.routes.ts` — `/` pasa a bienvenida; se añade `/join`; se conservan `/join/:code`, `/room/:roomId` y `/room/:roomId/dj`.
+- `web/src/app/features/join-code/` — rediseño con flecha al inicio, marca central, campo visible, ayuda, placeholders y botón "Entrar a la sala"; se conserva la entrada automática por enlace y el manejo de errores.
+- `web/src/app/features/room/` — cabecera con marca y "Conoce al DJ", estado/nombre/horario, nombre artístico cargado con `getDjProfile()` sin bloquear la sala, formulario con labels `.sr-only` y placeholders, listado compacto, actualización accesible y paginación.
+- `web/src/app/features/dj-profile/` — marca compacta y enlace de sesión expirada a `/join`.
+- `web/src/styles.scss` — Arial/sans, `color-scheme: dark`, `.sr-only`, botones de icono, foco, animación de entrada y `prefers-reduced-motion`.
+- Pruebas nuevas/actualizadas: bienvenida, ingreso manual y por enlace, errores, nombre del DJ y tolerancia a fallo del perfil.
+- `docs/DESIGN_SYSTEM.md` — componentes y pantallas web, excepción aprobada de labels ocultos y limitación de `hasEnded`.
+
+## Resultados reales
+- **Pruebas web**: `npm test -- --watch=false` -> 7 archivos, 29/29 correctas.
+- **Build web**: `npm run build` correcto; salida `web/dist/dj-requests-web`.
+- **Playwright + API simulada sobre el build**: bienvenida → `/join` → sala, `/join/:code` directo, nombre "DJ Luna", placeholders exactos, labels de 1×1 px, cero errores en formulario intacto, envío vacío bloqueado sin POST, envío correcto con un solo POST y formulario limpio, actualización accesible y ausencia de desbordamiento horizontal a 390, 320 y escritorio.
+- **Movimiento reducido**: arcos con `animation: none`; contenido con duración mínima; en movimiento normal los arcos terminan visibles con opacidad 0.2.
+- **Capturas**: `C:\Users\juand\AppData\Local\Temp\opencode\dj-web-redesign-shots`. No se realizó inspección visual humana ni del modelo sobre los PNG.
+- **Git**: sin commit ni push. Se conservaron los cambios previos del árbol de trabajo.
+- **Backend/BD**: sin cambios; migración `AddDjProfiles` sigue sin aplicarse y no se usó la API real.
+
+## Límites y pendientes
+- El modelo no puede interpretar visualmente los mockups; la implementación se basó en la especificación textual y OCR. La fidelidad visual completa requiere revisión humana de las capturas.
+- El DTO de invitado no expone `hasEnded`; no se muestra "Finalizada" ni se infiere desde la hora. Si se requiere, debe añadirse el dato en backend en una tarea posterior.
+- La prueba de navegador usó API simulada; no se ejecutó el recorrido manual contra PostgreSQL/API real.
+- Sin cambios en `mobile/`, LAN, proxy ni versiones de dependencias.
+
+---
+
+# DJ Requests — Estado de la tarea 08 (beta LAN)
 
 ## Resumen
 Preparación de la beta LAN para demostrar desde teléfonos en el mismo Wi-Fi: API en `0.0.0.0:5000`, web Angular en `0.0.0.0:4200` con proxy relativo, Expo web en `8081`, enlaces de invitación con la IP LAN y CORS restringido al origen exacto de Expo. La IP se inyecta por variables de entorno/User Secrets; no queda hardcodeada en la aplicación.
