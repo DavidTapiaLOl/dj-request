@@ -1,4 +1,63 @@
-﻿# DJ Requests — Estado de la tarea 09 (rediseño web de invitados)
+﻿# DJ Requests — Estado de la tarea 11 (retención automática de salas)
+
+## Resumen
+Retención automática en backend: `RetentionService` borra físicamente las salas con `purge_at <= now UTC` junto con su contenido temporal (sesiones, solicitudes y playlists) mediante las cascadas existentes, preservando DJ, perfil, foto, géneros y salas vigentes. `RetentionWorker` ejecuta el servicio en lotes desde un `BackgroundService`. Sin migraciones ni dependencias nuevas; `Retention:Enabled=false` por defecto.
+
+## Archivos creados/modificados
+- `backend/src/DjRequests.Api/Modules/Retention/Options/RetentionOptions.cs` — **nuevo**: `SectionName = "Retention"`, `Enabled`, `IntervalMinutes`, `BatchSize`.
+- `backend/src/DjRequests.Api/Modules/Retention/Options/RetentionOptionsValidator.cs` — **nuevo**: `IntervalMinutes > 0` y `BatchSize` entre 1 y 1000; registrado con `ValidateOnStart`.
+- `backend/src/DjRequests.Api/Modules/Retention/Services/IRetentionService.cs` — **nuevo**: `PurgeExpiredBatchAsync` devuelve `RetentionBatchResult(DeletedRooms)`.
+- `backend/src/DjRequests.Api/Modules/Retention/Services/RetentionService.cs` — **nuevo**: dos fases — selección de IDs sin bloqueo y, en transacción corta, `SELECT ... FOR UPDATE SKIP LOCKED` sobre `salas` ordenado por `purge_at, id`, revalidación con `timeProvider.GetUtcNow()` **post-lock** y `ExecuteDeleteAsync` con guard `PurgeAt <= nowAfterLock` (cascadas eliminan sesiones, solicitudes y playlists).
+- `backend/src/DjRequests.Api/Modules/Retention/Services/RetentionWorker.cs` — **nuevo**: `BackgroundService`; si está deshabilitado registra el motivo y no ejecuta pasadas; primera pasada inmediata al arrancar; drena lotes mientras `DeletedRooms >= BatchSize`; una excepción se registra como fallo operativo y espera `IntervalMinutes` sin bucle de reintentos.
+- `backend/src/DjRequests.Api/Program.cs` — registro de `RetentionOptions` con binding, validador `IValidateOptions` y `ValidateOnStart`; `IRetentionService` scoped; `AddHostedService<RetentionWorker>`.
+- `backend/src/DjRequests.Api/appsettings.json` — sección `Retention`: `Enabled=false`, `IntervalMinutes=15`, `BatchSize=100`.
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/WebAppFactory.cs` — fuerza `Retention:Enabled=false` por defecto en memoria (permite override por prueba) para que User Secrets locales no activen la limpieza; `FakeTimeProvider` ahora implementa `CreateTimer`/`ITimer` para que `Advance` dispare timers (antes solo movía el reloj).
+- Pruebas nuevas: `Modules/Retention/RetentionServiceTests.cs` (10 escenarios), `RetentionOptionsValidationTests.cs` (9 casos), `RetentionWorkerTests.cs` (3).
+
+## Resultados reales
+- **Build backend**: `dotnet build backend\DjRequests.slnx` correcto, 0 errores, 2 advertencias preexistentes (licencia Six Labors y CS0618).
+- **Pruebas de retención**: `dotnet test ... --filter "FullyQualifiedName~Modules.Retention"` → **22/22 correctas** con PostgreSQL/Testcontainers (incluye revalidación post-lock con `RoomLockPauseInterceptor`, rollback con trigger `RAISE EXCEPTION` y concurrencia con `Task.WhenAll`).
+- **Suite completa**: `dotnet test backend\DjRequests.slnx --no-build` → **305/305 correctas**.
+- **Git**: rama `feat/dj-profile`, sin commit ni push; cambios de la tarea 10 conservados.
+- La limpieza **no** se ejecutó contra `dj_requests`; permanece deshabilitada por defecto.
+
+## Límites y pendientes
+- No hay endpoint ni UI que muestre al DJ la elegibilidad de borrado de sus salas (pendiente futuro).
+- El borrado es físico e irreversible en salas vencidas; activarlo en un entorno con datos reales requiere revisión explícita.
+- Sin cambios en `mobile/`, `web/`, `desktop/`, dependencias ni migraciones.
+
+---
+
+# DJ Requests — Estado de la tarea 10 (correcciones de perfiles y código de sala)
+
+## Resumen
+Dos correcciones acotadas sin tocar contratos API, autenticación, diseño, dependencias ni migraciones: la foto de perfil se orienta según su EXIF antes de borrar metadatos, y el código de sala se normaliza antes de validar el formulario de ingreso.
+
+## Migración `AddDjProfiles`
+- **Aplicada localmente a `dj_requests`, confirmada por el usuario** en esta tarea.
+- Distinción importante: es una **confirmación del usuario**, no una comprobación ejecutada por este agente. No se volvió a aplicar, no se generó otra migración y no se consultó `__EFMigrationsHistory`; las pruebas de integración usan bases desechables creadas por Testcontainers, no `dj_requests`.
+
+## Cambios
+- `backend/src/DjRequests.Api/Modules/Profiles/Services/ProfileService.cs` — en `ProcessPhotoAsync` se aplica `image.Mutate(x => x.AutoOrient())` sobre los píxeles **antes** del redimensionado y de `StripMetadata`. Se conservan sin cambios los límites de tamaño, formatos permitidos, validación por contenido, dimensiones máximas y el reemplazo seguro de la foto anterior.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Profiles/ProfileEndpointsTests.cs` — prueba nueva `UploadPhoto_JpegWithExifOrientation_AppliesOrientationAndStripsExif`: JPEG 80×40 con EXIF `Orientation = 6` y mitades roja/azul; comprueba que el archivo guardado mide 40×80 (píxeles rotados), que el rojo queda arriba y el azul abajo y que `Metadata.ExifProfile` es `null`.
+- `web/src/app/features/join-code/join-code.page.ts` — `onSubmit` calcula `normalizeCode(...)`, escribe ese valor en el `FormControl` y **después** comprueba `this.form.invalid`. El patrón `CODE_PATTERN` no cambia: solo se recortan espacios exteriores y se pasa a mayúsculas; los caracteres internos no válidos siguen rechazados.
+- `web/src/app/features/join-code/join-code.page.spec.ts` — 5 pruebas nuevas: minúsculas con espacios exteriores, código mixto, caracteres no permitidos, espacio interno y longitud incorrecta tras recortar.
+
+## Resultados reales
+- **Build backend**: `dotnet build backend\DjRequests.slnx` correcto, 0 errores, 2 advertencias preexistentes (advertencias de licencia Six Labors en Debug/Release y CS0618 en `DatabaseFixture.cs`).
+- **Pruebas Profiles con PostgreSQL/Testcontainers**: primera ejecución falló con `DockerUnavailableException` porque Docker no estaba en ejecución; se inició Docker Desktop (motor 27.0.3) y después `dotnet test ... --filter "FullyQualifiedName~Modules.Profiles"` → **41/41 correctas** (40 previas + 1 nueva de EXIF). No se modificó `dj_requests`.
+- **Pruebas web**: `npm test -- --watch=false` → 7 archivos, **34/34 correctas** (29 previas + 5 nuevas).
+- **Build Angular**: `npm run build` correcto; salida `web/dist/dj-requests-web`.
+- **Git**: rama `feat/dj-profile`, sin commit ni push; cambios del árbol de trabajo previos conservados.
+
+## Límites y pendientes
+- **Pendiente conservado y no resuelto**: `SixLabors.ImageSharp` 4.1.3 exige licencia comercial para builds Release (los builds Debug siguen emitiendo las advertencias). No se resolvió ni se sustituyó la librería en esta tarea.
+- No se ejecutó la suite completa de backend, solo el módulo Profiles.
+- Sin cambios en `mobile/`, LAN, proxy, autenticación, contratos API ni migraciones.
+
+---
+
+# DJ Requests — Estado de la tarea 09 (rediseño web de invitados)
 
 ## Resumen
 Rediseño de la web Angular de invitados según los mockups aprobados en `docs/mockups/web/`: nueva bienvenida en `/`, ingreso manual en `/join`, conservación de `/join/:code`, rediseño de sala y formulario, marca reutilizable y estados de movimiento reducido. Se conservaron sesión, contratos API, validaciones, idempotencia, paginación y navegación al perfil del DJ. No se modificaron backend, base de datos, `mobile/` ni dependencias.
@@ -21,7 +80,7 @@ Rediseño de la web Angular de invitados según los mockups aprobados en `docs/m
 - **Movimiento reducido**: arcos con `animation: none`; contenido con duración mínima; en movimiento normal los arcos terminan visibles con opacidad 0.2.
 - **Capturas**: `C:\Users\juand\AppData\Local\Temp\opencode\dj-web-redesign-shots`. No se realizó inspección visual humana ni del modelo sobre los PNG.
 - **Git**: sin commit ni push. Se conservaron los cambios previos del árbol de trabajo.
-- **Backend/BD**: sin cambios; migración `AddDjProfiles` sigue sin aplicarse y no se usó la API real.
+- **Backend/BD en esa tarea**: sin cambios de código; en esa época la migración `AddDjProfiles` aún no estaba aplicada. Después se aplicó localmente, confirmada por el usuario (ver tarea 10).
 
 ## Límites y pendientes
 - El modelo no puede interpretar visualmente los mockups; la implementación se basó en la especificación textual y OCR. La fidelidad visual completa requiere revisión humana de las capturas.

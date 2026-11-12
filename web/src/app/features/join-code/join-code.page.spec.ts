@@ -73,6 +73,61 @@ describe('JoinCodePage', () => {
     expect(router.navigate).toHaveBeenCalledWith(['/join', CODE]);
   });
 
+  it('normalizes a lower-case code with surrounding spaces before validating', async () => {
+    const component = createComponent();
+    component.form.controls.code.setValue('  abcdefghjk ');
+
+    await component.onSubmit();
+
+    expect(component.form.controls.code.value).toBe(CODE);
+    expect(component.showCodeError()).toBe(false);
+    expect(router.navigate).toHaveBeenCalledWith(['/join', CODE]);
+    expect(sessions.join).not.toHaveBeenCalled();
+  });
+
+  it('normalizes a mixed-case code before validating', async () => {
+    const component = createComponent();
+    component.form.controls.code.setValue('AbCdEfGhJk');
+
+    await component.onSubmit();
+
+    expect(component.form.controls.code.value).toBe(CODE);
+    expect(router.navigate).toHaveBeenCalledWith(['/join', CODE]);
+  });
+
+  it('rejects disallowed characters without creating a session', async () => {
+    const component = createComponent();
+    component.form.controls.code.setValue('ABCDEFGHI0');
+
+    await component.onSubmit();
+
+    expect(component.showCodeError()).toBe(true);
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(sessions.join).not.toHaveBeenCalled();
+  });
+
+  it('keeps internal spaces invalid without stripping them', async () => {
+    const component = createComponent();
+    component.form.controls.code.setValue('ABCD EFGHJK');
+
+    await component.onSubmit();
+
+    expect(component.showCodeError()).toBe(true);
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(sessions.join).not.toHaveBeenCalled();
+  });
+
+  it('rejects an incorrect length even after trimming', async () => {
+    const component = createComponent();
+    component.form.controls.code.setValue(' ABCDEFGH ');
+
+    await component.onSubmit();
+
+    expect(component.showCodeError()).toBe(true);
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(sessions.join).not.toHaveBeenCalled();
+  });
+
   it('enters the room automatically from a shared code link', async () => {
     routeCode = CODE;
     const fixture = TestBed.createComponent(JoinCodePage);

@@ -13,6 +13,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
@@ -84,6 +86,28 @@ public class ProfileEndpointsTests : IAsyncLifetime
         using var image = new Image<Rgba32>(width, height);
         using var output = new MemoryStream();
         image.SaveAsPng(output);
+        return output.ToArray();
+    }
+
+    private static byte[] CreateJpegWithExifOrientation(int width, int height, ushort orientation)
+    {
+        using var image = new Image<Rgba32>(width, height);
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                image[x, y] = x < width / 2
+                    ? new Rgba32(230, 30, 30)
+                    : new Rgba32(30, 30, 230);
+            }
+        }
+
+        var exif = new ExifProfile();
+        exif.SetValue(ExifTag.Orientation, orientation);
+        image.Metadata.ExifProfile = exif;
+
+        using var output = new MemoryStream();
+        image.SaveAsJpeg(output, new JpegEncoder { Quality = 100 });
         return output.ToArray();
     }
 
@@ -459,6 +483,39 @@ public class ProfileEndpointsTests : IAsyncLifetime
         Assert.True(stored.Width <= 2048);
         Assert.True(stored.Height <= 2048);
         Assert.Equal(2048, stored.Width);
+    }
+
+    [Fact]
+    public async Task UploadPhoto_JpegWithExifOrientation_AppliesOrientationAndStripsExif()
+    {
+        await RegisterAndLoginAsync();
+
+        var source = CreateJpegWithExifOrientation(80, 40, orientation: 6);
+        using (var form = BuildPhotoForm(source, "photo.jpg", "image/jpeg"))
+        {
+            var upload = await Client.PostAsync("/api/dj/profile/photo", form);
+            Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
+        }
+
+        var body = await (await Client.GetAsync("/api/dj/profile"))
+            .Content.ReadFromJsonAsync<ProfileDto>();
+        Assert.NotNull(body);
+        Assert.NotNull(body.PhotoUrl);
+        Assert.EndsWith(".jpg", body.PhotoUrl);
+
+        var fileName = body.PhotoUrl!.Split('/').Last();
+        using var stored = await Image.LoadAsync<Rgba32>(Path.Combine(_storageDir, fileName));
+
+        Assert.Equal(40, stored.Width);
+        Assert.Equal(80, stored.Height);
+        Assert.Null(stored.Metadata.ExifProfile);
+
+        var topPixel = stored[10, 10];
+        var bottomPixel = stored[10, 70];
+        Assert.True(topPixel.R > 180 && topPixel.G < 90 && topPixel.B < 90,
+            $"Se esperaba rojo arriba y llegó {topPixel}.");
+        Assert.True(bottomPixel.B > 180 && bottomPixel.R < 90 && bottomPixel.G < 90,
+            $"Se esperaba azul abajo y llegó {bottomPixel}.");
     }
 
     [Fact]

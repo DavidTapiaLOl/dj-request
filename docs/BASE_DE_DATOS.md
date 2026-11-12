@@ -88,7 +88,7 @@ id uuid PK; administrador_id uuid nullable FK administradores ON DELETE SET NULL
 
 ## Concurrencia, limpieza y límites
 Creación de contenido: transacción, bloquear sala para coordinar cierre/reprogramación/limpieza y sesión para cuota/intervalo. Orden de bloqueo consistente sala→sesión. Revalidar estado tras obtener bloqueo. Buscar idempotencia antes de consumir cuota. Cuenta total de solicitudes de sesión incluye rechazadas; no puede eludirse al cambiar estado.
-Worker: buscar hasta 100 salas purge_at <= now por lote, bloquear con mecanismo PostgreSQL apropiado (por ejemplo FOR UPDATE SKIP LOCKED), revalidar caducidad y borrar dentro de transacción. Cascadas eliminan sesiones, solicitudes y playlists. No conservar snapshots. Reintentos seguros; no logs de contenido. Inyectar reloj para pruebas. Mostrar elegibilidad de borrado claramente al DJ.
+Worker implementado (`Modules/Retention`): por lote selecciona sin bloqueo hasta `Retention:BatchSize` salas con `purge_at <= now`; en transacción corta las bloquea con `FOR UPDATE SKIP LOCKED` (orden `purge_at, id`), revalida `purge_at` con el reloj bajo bloqueo y borra con `ExecuteDeleteAsync`. Las cascadas existentes eliminan sesiones, solicitudes y playlists; se preservan DJ, perfil, foto y géneros. Configuración `Retention` (`Enabled=false` por defecto, `IntervalMinutes=15`, `BatchSize=100`) validada al arranque; errores se registran y esperan al siguiente intervalo. Reloj inyectable para pruebas. No conservar snapshots; no logs de contenido. Pendiente: mostrar elegibilidad de borrado claramente al DJ.
 
 ## Pruebas de aceptación del esquema
 1. Correo DJ normalizado duplicado falla; no hashes/credenciales en DTO.

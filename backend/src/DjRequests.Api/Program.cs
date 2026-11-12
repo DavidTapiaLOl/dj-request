@@ -14,6 +14,8 @@ using DjRequests.Api.Modules.Profiles.Options;
 using DjRequests.Api.Modules.Profiles.Services;
 using DjRequests.Api.Modules.Requests.Endpoints;
 using DjRequests.Api.Modules.Requests.Services;
+using DjRequests.Api.Modules.Retention.Options;
+using DjRequests.Api.Modules.Retention.Services;
 using DjRequests.Api.Modules.Rooms.Options;
 using DjRequests.Api.Modules.Rooms.Services;
 using DjRequests.Api.Modules.Rooms.Endpoints;
@@ -215,6 +217,14 @@ builder.Services.AddOptions<FileStorageOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IFileStorage, FileStorage>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
+
+builder.Services.AddOptions<RetentionOptions>()
+    .Bind(builder.Configuration.GetSection(RetentionOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<RetentionOptions>, RetentionOptionsValidator>();
+builder.Services.AddScoped<IRetentionService, RetentionService>();
+builder.Services.AddHostedService<RetentionWorker>();
+
 builder.Services.Configure<TimeZoneValidatorOptions>(
     config => config.DefaultTimezone = "America/Mexico_City");
 

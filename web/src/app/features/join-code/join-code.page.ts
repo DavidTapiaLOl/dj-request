@@ -45,9 +45,12 @@ export class JoinCodePage implements OnInit {
 
     this.submitted.set(true);
     this.errorMessage.set(null);
-    if (this.form.invalid) return;
 
     const code = normalizeCode(this.form.controls.code.value);
+    this.form.controls.code.setValue(code);
+
+    if (this.form.invalid) return;
+
     if (this.route.snapshot.paramMap.get('code')) {
       void this.enter(code);
       return;

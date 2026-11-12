@@ -443,6 +443,23 @@ La validación de la credencial se consulta **antes** de aplicar el límite, de 
 
 ---
 
+## Retención de salas
+El worker `RetentionWorker` borra físicamente las salas vencidas y su contenido temporal (sesiones, solicitudes y playlists) mediante las cascadas existentes. **No se ejecuta contra `dj_requests` en las pruebas**; las suites usan bases desechables de Testcontainers.
+
+Configuración (`appsettings.json` o variables de entorno `Retention__*`):
+
+| Clave | Por defecto | Descripción |
+|---|---|---|
+| `Retention:Enabled` | `false` | Habilita el worker. **Activarlo es irreversible**: borra filas de salas con `purge_at <= now`. |
+| `Retention:IntervalMinutes` | `15` | Espera entre pasadas (> 0). |
+| `Retention:BatchSize` | `100` | Salas por lote (1–1000). Se drenan lotes completos por pasada. |
+
+- La configuración se valida al arranque (`ValidateOnStart`); valores fuera de rango impiden que la API sirva peticiones.
+- La API bloquea el acceso a la sala al llegar `purge_at` aunque el worker esté deshabilitado o caído.
+- El worker no hace reintentos en bucle: un fallo se registra y espera al siguiente intervalo.
+
+---
+
 ## Notas
 - EF Core Migrations es la fuente ejecutable del esquema. No se duplica DDL en scripts de init de Docker.
 - `EnsureCreated` **no** se utiliza. Migraciones solo manuales.

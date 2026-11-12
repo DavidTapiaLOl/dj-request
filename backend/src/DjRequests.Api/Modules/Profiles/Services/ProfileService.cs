@@ -445,6 +445,8 @@ public sealed class ProfileService(
 
         using (image)
         {
+            image.Mutate(x => x.AutoOrient());
+
             if (image.Width > _storageOptions.MaxDimensionPx || image.Height > _storageOptions.MaxDimensionPx)
             {
                 image.Mutate(x => x.Resize(new ResizeOptions

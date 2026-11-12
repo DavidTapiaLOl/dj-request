@@ -60,11 +60,20 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        if (_settings.Count > 0)
+        // Retention queda deshabilitado por defecto en todos los tests para que
+        // unos User Secrets locales no activen la limpieza fisica. Un test puede
+        // sobreescribir la clave si necesita el worker.
+        var settings = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
         {
-            builder.ConfigureAppConfiguration((_, configuration) =>
-                configuration.AddInMemoryCollection(_settings));
+            ["Retention:Enabled"] = "false"
+        };
+        foreach (var pair in _settings)
+        {
+            settings[pair.Key] = pair.Value;
         }
+
+        builder.ConfigureAppConfiguration((_, configuration) =>
+            configuration.AddInMemoryCollection(settings));
 
         var testConnectionString = _postgres.Container.GetConnectionString()
             .Replace("Database=postgres", $"Database={_dbName}");
@@ -203,9 +212,166 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
 public class FakeTimeProvider : TimeProvider
 {
-    public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.UtcNow;
+    private readonly object _sync = new();
+    private readonly List<FakeTimer> _timers = new();
+    private DateTimeOffset _utcNow = DateTimeOffset.UtcNow;
+
+    public DateTimeOffset UtcNow
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _utcNow;
+            }
+        }
+        set
+        {
+            lock (_sync)
+            {
+                _utcNow = value;
+            }
+        }
+    }
 
     public override DateTimeOffset GetUtcNow() => UtcNow;
 
-    public void Advance(TimeSpan span) => UtcNow = UtcNow.Add(span);
+    // Advance mueve el reloj y dispara los timers vencidos. Asignar UtcNow
+    // directamente solo cambia el reloj y no dispara timers.
+    public void Advance(TimeSpan span)
+    {
+        List<FakeTimer> due;
+        lock (_sync)
+        {
+            _utcNow = _utcNow.Add(span);
+
+            due = new List<FakeTimer>();
+            foreach (var timer in _timers.ToArray())
+            {
+                if (timer.TryMarkDue(_utcNow))
+                {
+                    due.Add(timer);
+                }
+            }
+        }
+
+        // Los callbacks se invocan fuera del lock para no bloquear otros hilos.
+        foreach (var timer in due)
+        {
+            timer.InvokeCallback();
+        }
+    }
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+
+        lock (_sync)
+        {
+            var timer = new FakeTimer(this, callback, state, dueTime, period);
+            _timers.Add(timer);
+            return timer;
+        }
+    }
+
+    private sealed class FakeTimer : ITimer
+    {
+        private readonly FakeTimeProvider _owner;
+        private readonly TimerCallback _callback;
+        private readonly object? _state;
+        private TimeSpan _period;
+        private DateTimeOffset? _dueAt;
+        private bool _disposed;
+
+        public FakeTimer(
+            FakeTimeProvider owner,
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            _owner = owner;
+            _callback = callback;
+            _state = state;
+            _period = period;
+            _dueAt = dueTime == Timeout.InfiniteTimeSpan ? null : owner._utcNow + dueTime;
+        }
+
+        // Se invoca siempre con el lock del owner tomado.
+        public bool TryMarkDue(DateTimeOffset now)
+        {
+            if (_disposed || _dueAt is null || now < _dueAt.Value)
+            {
+                return false;
+            }
+
+            if (_period == Timeout.InfiniteTimeSpan || _period <= TimeSpan.Zero)
+            {
+                _dueAt = null;
+                _owner._timers.Remove(this);
+                return true;
+            }
+
+            _dueAt = now + _period;
+            return true;
+        }
+
+        public void InvokeCallback()
+        {
+            lock (_owner._sync)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+            }
+
+            _callback(_state);
+        }
+
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            lock (_owner._sync)
+            {
+                if (_disposed)
+                {
+                    return false;
+                }
+
+                _period = period;
+                _dueAt = dueTime == Timeout.InfiniteTimeSpan ? null : _owner._utcNow + dueTime;
+
+                if (_dueAt is null)
+                {
+                    _owner._timers.Remove(this);
+                }
+                else if (!_owner._timers.Contains(this))
+                {
+                    _owner._timers.Add(this);
+                }
+
+                return true;
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_owner._sync)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                _owner._timers.Remove(this);
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return ValueTask.CompletedTask;
+        }
+    }
 }
