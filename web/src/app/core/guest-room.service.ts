@@ -3,9 +3,11 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { API_BASE } from './api-config';
 import {
+  CreatePlaylistPayload,
   CreateSolicitudPayload,
   DjProfile,
   GuestRoomResponse,
+  Playlist,
   Solicitud,
   SolicitudPage,
 } from './models';
@@ -29,6 +31,12 @@ export class GuestRoomService {
 
   createRequest(roomId: string, guestToken: string, payload: CreateSolicitudPayload): Observable<Solicitud> {
     return this.http.post<Solicitud>(`${API_BASE}/guest/rooms/${roomId}/requests`, payload, {
+      headers: guestHeaders(guestToken),
+    });
+  }
+
+  createPlaylist(roomId: string, guestToken: string, payload: CreatePlaylistPayload): Observable<Playlist> {
+    return this.http.post<Playlist>(`${API_BASE}/guest/rooms/${roomId}/playlists`, payload, {
       headers: guestHeaders(guestToken),
     });
   }

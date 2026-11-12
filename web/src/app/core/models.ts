@@ -61,6 +61,22 @@ export interface CreateSolicitudPayload extends CreateSolicitudInput {
   idempotencyKey: string;
 }
 
+export interface Playlist {
+  id: string;
+  nombre: string | null;
+  enlace: string;
+  createdAt: string;
+}
+
+export interface CreatePlaylistInput {
+  nombre: string | null;
+  enlace: string;
+}
+
+export interface CreatePlaylistPayload extends CreatePlaylistInput {
+  idempotencyKey: string;
+}
+
 export interface Genero {
   id: number;
   nombre: string;

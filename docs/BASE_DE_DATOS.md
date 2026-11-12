@@ -99,7 +99,7 @@ Worker implementado (`Modules/Retention`): en transacción corta, una sola consu
 6. Borrar sala elimina contenido y sesiones; conserva DJ y catálogo.
 7. Artista/género/enlace omitidos son null; playlist sin enlace falla.
 8. Solo existe un perfil por DJ; borrar el DJ elimina su perfil; un invitado de sala A no consulta el perfil mediante una sesión de sala B.
-Pruebas API posteriores: acceso de otro DJ denegado; invitado no lee playlists; límite concurrente exacto; sala cerrada no recibe; a purge_at no hay acceso aunque worker esté detenido.
+Pruebas API cubiertas: acceso de otro DJ denegado (404), invitado no lee playlists (sin endpoint → 405), límite concurrente exacto (1×201 + 1×429), sala pausada no recibe (409) y a purge_at no hay acceso (404) aunque el worker esté detenido. Creación de playlist probada con idempotencia, cuota `max_playlists_sesion` e intervalo compartido con solicitudes.
 
 ## Migraciones y aplicación
 `InitialCore` contiene las entidades iniciales e Identity auxiliar. `AddDjProfiles` añade únicamente `perfiles_dj`, su restricción, índice y FK. Revisar los SQL de `backend/artifacts/` antes de aplicar a `dj_requests`; la generación del archivo no significa que la migración haya sido aplicada. No usar EnsureCreated ni borrar volúmenes para resolver fallas. Tests en base independiente; jamás drop sobre dj_requests. Verificar backup antes de cambios con datos relevantes.

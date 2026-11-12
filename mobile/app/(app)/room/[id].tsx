@@ -11,10 +11,10 @@ import {
   Pressable,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { request, listSolicitudes, updateSolicitudState, ApiError, NetworkError } from "@/api/client";
-import { RoomResponse, SolicitudResponse, SolicitudPageResponse } from "@/api/dto";
+import { request, listSolicitudes, listPlaylists, updateSolicitudState, ApiError, NetworkError } from "@/api/client";
+import { RoomResponse, SolicitudResponse, SolicitudPageResponse, PlaylistResponse, PlaylistPageResponse } from "@/api/dto";
 import { StatusBadge } from "@/components/StatusBadge";
-import { formatRoomSchedule } from "@/utils/dateFormat";
+import { formatRoomSchedule, formatSentAt } from "@/utils/dateFormat";
 import { Ionicons } from "@expo/vector-icons";
 import QRCode from "react-native-qrcode-svg";
 import { ScreenContainer } from "@/components/ScreenContainer";
@@ -122,6 +122,19 @@ export default function RoomDetailScreen() {
   const [solicitudesError, setSolicitudesError] = React.useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = React.useState<string | null>(null);
   const [linkError, setLinkError] = React.useState<{ id: string; message: string } | null>(null);
+
+  // --- Pestañas y playlists compartidas (solo DJ) ---
+  const [activeTab, setActiveTab] = React.useState<"solicitudes" | "playlists">("solicitudes");
+  const [playlists, setPlaylists] = React.useState<PlaylistResponse[]>([]);
+  const [playlistsPage, setPlaylistsPage] = React.useState(1);
+  const [playlistsHasMore, setPlaylistsHasMore] = React.useState(false);
+  const [playlistsLoading, setPlaylistsLoading] = React.useState(false);
+  const [playlistsError, setPlaylistsError] = React.useState<string | null>(null);
+  const [playlistLinkError, setPlaylistLinkError] = React.useState<{
+    id: string;
+    message: string;
+  } | null>(null);
+  const playlistsRequestedRef = React.useRef(false);
 
   const loadRoom = React.useCallback(async () => {
     if (!id) {
@@ -245,6 +258,69 @@ export default function RoomDetailScreen() {
       loadSolicitudes(1);
     }
   }, [id, room, loadSolicitudes]);
+
+  // --- Carga de playlists (carga perezosa al abrir la pestaña) ---
+  const loadPlaylists = React.useCallback(
+    async (page: number = 1, append: boolean = false) => {
+      if (!id) return;
+
+      setPlaylistsLoading(true);
+      setPlaylistsError(null);
+
+      try {
+        const data: PlaylistPageResponse = await listPlaylists(id, { page, pageSize: 20 });
+        if (append) {
+          setPlaylists(prev => [...prev, ...data.items]);
+        } else {
+          setPlaylists(data.items);
+        }
+        setPlaylistsPage(data.page);
+        setPlaylistsHasMore(data.hasMore);
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          setPlaylistsError("Tu sesión no tiene permiso para ver las playlists.");
+        } else if (err instanceof ApiError && err.status === 404) {
+          setPlaylistsError("Sala no encontrada.");
+        } else if (err instanceof NetworkError) {
+          setPlaylistsError("Sin conexión con el servidor.");
+        } else {
+          setPlaylistsError("No se pudieron cargar las playlists.");
+        }
+      } finally {
+        setPlaylistsLoading(false);
+      }
+    },
+    [id]
+  );
+
+  React.useEffect(() => {
+    if (activeTab === "playlists" && room && !playlistsRequestedRef.current) {
+      playlistsRequestedRef.current = true;
+      loadPlaylists(1);
+    }
+  }, [activeTab, room, loadPlaylists]);
+
+  const handleRefreshPlaylists = () => {
+    loadPlaylists(1);
+  };
+
+  const handleLoadMorePlaylists = () => {
+    if (!playlistsLoading && playlistsHasMore) {
+      loadPlaylists(playlistsPage + 1, true);
+    }
+  };
+
+  const handleOpenPlaylistEnlace = React.useCallback((playlistId: string, url: string) => {
+    if (Platform.OS === "web" || !isAbsoluteHttpUrl(url)) return;
+
+    setPlaylistLinkError(null);
+    Linking.openURL(url).catch(() => {
+      setPlaylistLinkError({
+        id: playlistId,
+        message: "No se pudo abrir el enlace. Verifica la URL o inténtalo de nuevo.",
+      });
+    });
+  }, []);
 
   // --- Acciones sobre solicitudes ---
   const handleSolicitudAction = async (solicitud: SolicitudResponse, nuevoEstado: string) => {
@@ -541,7 +617,55 @@ export default function RoomDetailScreen() {
         )}
       </View>
 
+      {/* Selector de pestañas: Solicitudes / Playlists */}
+      <View style={styles.tabsBar} accessibilityRole="tablist" accessibilityLabel="Secciones de la sala">
+        <Pressable
+          onPress={() => setActiveTab("solicitudes")}
+          accessibilityRole="tab"
+          accessibilityLabel="Solicitudes"
+          accessibilityState={{ selected: activeTab === "solicitudes" }}
+          style={({ pressed }) => [
+            styles.tabButton,
+            activeTab === "solicitudes" && styles.tabButtonActive,
+            pressed && styles.tabButtonPressed,
+          ]}
+        >
+          <Ionicons
+            name="musical-notes-outline"
+            size={18}
+            color={activeTab === "solicitudes" ? colors.onPrimary : colors.textSecondary}
+          />
+          <Text
+            style={[styles.tabLabel, activeTab === "solicitudes" && styles.tabLabelActive]}
+          >
+            Solicitudes
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => setActiveTab("playlists")}
+          accessibilityRole="tab"
+          accessibilityLabel="Playlists"
+          accessibilityState={{ selected: activeTab === "playlists" }}
+          style={({ pressed }) => [
+            styles.tabButton,
+            activeTab === "playlists" && styles.tabButtonActive,
+            pressed && styles.tabButtonPressed,
+          ]}
+        >
+          <Ionicons
+            name="list-outline"
+            size={18}
+            color={activeTab === "playlists" ? colors.onPrimary : colors.textSecondary}
+          />
+          <Text style={[styles.tabLabel, activeTab === "playlists" && styles.tabLabelActive]}>
+            Playlists
+          </Text>
+        </Pressable>
+      </View>
+
       {/* Sección de solicitudes */}
+      {activeTab === "solicitudes" && (
       <View style={styles.solicitudesSection}>
         <View style={styles.solicitudesHeader}>
           <Text style={styles.solicitudesTitle}>Solicitudes</Text>
@@ -709,6 +833,141 @@ export default function RoomDetailScreen() {
           </>
         )}
       </View>
+      )}
+
+      {/* Sección de playlists (solo el DJ) */}
+      {activeTab === "playlists" && (
+        <View style={styles.solicitudesSection}>
+          <View style={styles.solicitudesHeader}>
+            <Text style={styles.solicitudesTitle}>Playlists</Text>
+            <Pressable
+              onPress={handleRefreshPlaylists}
+              disabled={playlistsLoading}
+              accessibilityRole="button"
+              accessibilityLabel="Actualizar playlists"
+              accessibilityState={{ disabled: playlistsLoading }}
+              style={({ pressed }) => [
+                styles.refreshButton,
+                pressed && styles.refreshButtonPressed,
+              ]}
+            >
+              {playlistsLoading ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Ionicons
+                  name="refresh-outline"
+                  size={20}
+                  color={colors.textSecondary}
+                />
+              )}
+            </Pressable>
+          </View>
+
+          <Text style={styles.playlistsHint}>
+            Los invitados comparten playlists desde su sala; aquí aparecen todas las de tu
+            sesión.
+          </Text>
+
+          {playlistsError && (
+            <View style={styles.solicitudesErrorBanner}>
+              <Text style={styles.solicitudesErrorText}>{playlistsError}</Text>
+              <AppButton
+                title="Reintentar"
+                variant="secondary"
+                onPress={handleRefreshPlaylists}
+                style={styles.playlistRetryButton}
+              />
+            </View>
+          )}
+
+          {playlistsLoading && playlists.length === 0 ? (
+            <View style={styles.solicitudesCentered}>
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+          ) : playlists.length === 0 && !playlistsError ? (
+            <View style={styles.solicitudesCentered}>
+              <Ionicons name="list-outline" size={32} color={colors.neutral} />
+              <Text style={styles.solicitudesEmptyText}>Todavía no hay playlists.</Text>
+            </View>
+          ) : (
+            <>
+              {playlists.map(p => {
+                const sentLabel = formatSentAt(p.createdAt, roomSafe.timezone);
+                const nombre = p.nombre && p.nombre.trim() !== "" ? p.nombre : null;
+                const enlaceValido = isAbsoluteHttpUrl(p.enlace);
+
+                return (
+                  <View key={p.id} style={styles.solicitudCard}>
+                    <View style={styles.solicitudTopRow}>
+                      <Text style={styles.solicitudNombre}>{nombre ?? "Playlist sin nombre"}</Text>
+                    </View>
+
+                    {sentLabel ? (
+                      <Text style={styles.solicitudMeta}>Enviada el {sentLabel}</Text>
+                    ) : null}
+
+                    {enlaceValido ? (
+                      <View style={styles.linkSection}>
+                        {Platform.OS === "web" ? (
+                          <a
+                            href={p.enlace}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Abrir playlist: ${p.enlace}`}
+                            style={linkAnchorStyle}
+                          >
+                            <Ionicons
+                              name="link-outline"
+                              size={16}
+                              color={colors.primary}
+                            />
+                            <Text style={styles.linkText}>Abrir playlist</Text>
+                          </a>
+                        ) : (
+                          <Pressable
+                            onPress={() => handleOpenPlaylistEnlace(p.id, p.enlace)}
+                            accessibilityRole="link"
+                            accessibilityLabel={`Abrir playlist: ${p.enlace}`}
+                            style={({ pressed }) => [
+                              styles.linkPressable,
+                              pressed && styles.linkPressablePressed,
+                            ]}
+                          >
+                            <Ionicons
+                              name="link-outline"
+                              size={16}
+                              color={colors.primary}
+                            />
+                            <Text style={styles.linkText}>Abrir playlist</Text>
+                          </Pressable>
+                        )}
+                        {playlistLinkError?.id === p.id ? (
+                          <Text style={styles.linkErrorText}>{playlistLinkError.message}</Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+
+              {playlistsLoading && (
+                <View style={styles.solicitudesCentered}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                </View>
+              )}
+
+              {playlistsHasMore && !playlistsLoading && (
+                <AppButton
+                  title="Cargar más"
+                  onPress={handleLoadMorePlaylists}
+                  variant="secondary"
+                  style={styles.loadMoreButton}
+                />
+              )}
+            </>
+          )}
+        </View>
+      )}
         </ScrollView>
       </FadeInView>
     </ScreenContainer>
@@ -948,6 +1207,48 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     backgroundColor: colors.surface,
     borderRadius: radius.card,
+  },
+  tabsBar: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.xl,
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    minHeight: layout.minTouchTarget,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.control,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceRaised,
+  },
+  tabButtonActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  tabButtonPressed: {
+    opacity: 0.85,
+  },
+  tabLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.textSecondary,
+  },
+  tabLabelActive: {
+    color: colors.onPrimary,
+  },
+  playlistsHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  playlistRetryButton: {
+    marginTop: spacing.md,
+    width: "100%",
   },
   solicitudesHeader: {
     flexDirection: "row",

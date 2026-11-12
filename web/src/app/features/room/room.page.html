@@ -46,11 +46,40 @@
     </section>
 
     <section class="panel request">
-      <h2 class="section__title">¿Qué quieres escuchar?</h2>
+      <h2 class="section__title">
+        {{ mode() === 'playlist' ? 'Comparte tu playlist' : '¿Qué quieres escuchar?' }}
+      </h2>
 
       @if (unavailableReason(); as reason) {
         <p class="notice-text" role="status">{{ reason }}</p>
       } @else {
+        <fieldset class="mode-switch">
+          <legend class="sr-only">¿Qué quieres enviar?</legend>
+          <label class="mode-switch__option">
+            <input
+              class="mode-switch__input"
+              type="radio"
+              name="request-mode"
+              value="song"
+              [checked]="mode() === 'song'"
+              (change)="setMode('song')"
+            />
+            <span class="mode-switch__label">Pedir canción</span>
+          </label>
+          <label class="mode-switch__option">
+            <input
+              class="mode-switch__input"
+              type="radio"
+              name="request-mode"
+              value="playlist"
+              [checked]="mode() === 'playlist'"
+              (change)="setMode('playlist')"
+            />
+            <span class="mode-switch__label">Compartir playlist</span>
+          </label>
+        </fieldset>
+
+        @if (mode() === 'song') {
         <form class="form" [formGroup]="form" (ngSubmit)="onSubmit()" novalidate>
           <div class="form__grid">
             <div class="field field--wide">
@@ -152,6 +181,70 @@
             {{ submitting() ? 'Enviando…' : 'Enviar solicitud' }}
           </button>
         </form>
+        } @else {
+        <form class="form" [formGroup]="playlistForm" (ngSubmit)="onSubmitPlaylist()" novalidate>
+          <div class="form__grid">
+            <div class="field field--wide">
+              <label class="sr-only" for="playlist-name">Nombre de la playlist (opcional)</label>
+              <input
+                id="playlist-name"
+                class="field__input"
+                [class.field__input--invalid]="showPlaylistError('nombre')"
+                type="text"
+                formControlName="nombre"
+                maxlength="200"
+                autocomplete="off"
+                [attr.aria-describedby]="showPlaylistError('nombre') ? 'playlist-name-error' : null"
+                placeholder="Nombre de la playlist (opcional)"
+              />
+              @if (showPlaylistError('nombre')) {
+                <span id="playlist-name-error" class="field__error" role="alert">
+                  {{ errorPlaylistFor('nombre') }}
+                </span>
+              }
+            </div>
+
+            <div class="field field--wide">
+              <label class="sr-only" for="playlist-link">Enlace de la playlist</label>
+              <input
+                id="playlist-link"
+                class="field__input"
+                [class.field__input--invalid]="showPlaylistError('enlace')"
+                type="url"
+                formControlName="enlace"
+                maxlength="2048"
+                inputmode="url"
+                autocomplete="off"
+                aria-required="true"
+                [attr.aria-describedby]="showPlaylistError('enlace') ? 'playlist-link-error playlist-link-help' : 'playlist-link-help'"
+                placeholder="Enlace de la playlist *"
+              />
+              <span id="playlist-link-help" class="sr-only">
+                Debe empezar por http:// o https://, con dominio y sin credenciales.
+              </span>
+              @if (showPlaylistError('enlace')) {
+                <span id="playlist-link-error" class="field__error" role="alert">
+                  {{ errorPlaylistFor('enlace') }}
+                </span>
+              }
+            </div>
+          </div>
+
+          @if (playlistError()) {
+            <p class="form__error" role="alert">{{ playlistError() }}</p>
+          }
+          @if (playlistSuccess()) {
+            <p class="form__success" role="status">{{ playlistSuccess() }}</p>
+          }
+
+          <p class="request__note">El nombre es opcional; el enlace es obligatorio.</p>
+          <p class="request__note request__note--privacy">Solo el DJ podrá ver esta playlist.</p>
+
+          <button class="button button--primary button--full" type="submit" [disabled]="playlistSubmitting()">
+            {{ playlistSubmitting() ? 'Enviando…' : 'Enviar playlist' }}
+          </button>
+        </form>
+        }
       }
     </section>
 

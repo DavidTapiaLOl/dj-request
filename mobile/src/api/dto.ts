@@ -128,6 +128,23 @@ export type UpdateSolicitudStateRequest = {
   version: number;
 };
 
+// --- Playlists compartidas (solo DJ) ---
+
+export type PlaylistResponse = {
+  id: string;
+  nombre: string | null;
+  enlace: string;
+  createdAt: string;
+};
+
+export type PlaylistPageResponse = {
+  items: PlaylistResponse[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  hasMore: boolean;
+};
+
 // --- Esquemas Zod validación ---
 
 export const loginSchema = z.object({

@@ -1,4 +1,4 @@
-import { HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { of, throwError } from 'rxjs';
@@ -6,8 +6,10 @@ import { GuestRoomService } from '../../core/guest-room.service';
 import { GuestSessionService } from '../../core/guest-session.service';
 import { GenreService } from '../../core/genre.service';
 import {
+  CreatePlaylistPayload,
   CreateSolicitudPayload,
   GuestSession,
+  Playlist,
   RoomMinimal,
   Solicitud,
   SolicitudPage,
@@ -58,6 +60,15 @@ function makePage(items: Solicitud[], page = 1, hasMore = false): SolicitudPage 
   return { items, page, pageSize: 20, totalCount: items.length, hasMore };
 }
 
+function makePlaylist(nombre: string | null = 'Mi mezcla'): Playlist {
+  return {
+    id: '44444444-4444-4444-4444-444444444444',
+    nombre,
+    enlace: 'https://ejemplo.com/lista',
+    createdAt: new Date().toISOString(),
+  };
+}
+
 function makeProfile() {
   return {
     artistName: 'DJ Prueba',
@@ -80,6 +91,7 @@ describe('RoomPage', () => {
     getRoom: MockFn;
     listRequests: MockFn;
     createRequest: MockFn;
+    createPlaylist: MockFn;
     getDjProfile: MockFn;
   };
   let genres: { list: MockFn };
@@ -100,6 +112,7 @@ describe('RoomPage', () => {
       getRoom: vi.fn().mockReturnValue(of({ room: makeRoom(), expiresAt: makeRoom().endsAt })),
       listRequests: vi.fn().mockReturnValue(of(makePage([]))),
       createRequest: vi.fn(),
+      createPlaylist: vi.fn(),
       getDjProfile: vi.fn().mockReturnValue(of(makeProfile())),
     };
     genres = { list: vi.fn().mockReturnValue(of([{ id: 1, nombre: 'Pop' }])) };
@@ -269,5 +282,203 @@ describe('RoomPage', () => {
     expect(component.djName()).toBeNull();
     expect(component.roomError()).toBeNull();
     expect(component.sessionExpired()).toBe(false);
+  });
+
+  // --- Playlists ---
+
+  it('starts in song mode and switches to the playlist form', async () => {
+    const component = createComponent();
+    await component.init();
+
+    expect(component.mode()).toBe('song');
+
+    component.setMode('playlist');
+
+    expect(component.mode()).toBe('playlist');
+    expect(component.playlistForm.controls.enlace.invalid).toBe(true);
+    expect(component.playlistForm.controls.nombre.valid).toBe(true);
+  });
+
+  it('keeps the playlist draft when switching between forms', async () => {
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.setValue({ nombre: 'Borrador', enlace: 'https://ejemplo.com/draft' });
+    component.setMode('song');
+    component.setMode('playlist');
+
+    expect(component.playlistForm.controls.nombre.value).toBe('Borrador');
+    expect(component.playlistForm.controls.enlace.value).toBe('https://ejemplo.com/draft');
+  });
+
+  it('does not submit an invalid playlist form', async () => {
+    const component = createComponent();
+    await component.init();
+    component.setMode('playlist');
+    component.playlistForm.controls.nombre.setValue('Solo nombre sin enlace');
+
+    await component.onSubmitPlaylist();
+
+    expect(component.playlistForm.invalid).toBe(true);
+    expect(rooms.createPlaylist).not.toHaveBeenCalled();
+  });
+
+  it('rejects a playlist link without host or with credentials', async () => {
+    const component = createComponent();
+    await component.init();
+
+    component.playlistForm.controls.enlace.setValue('ftp://ejemplo.com/lista');
+    expect(component.playlistForm.controls.enlace.invalid).toBe(true);
+
+    component.playlistForm.controls.enlace.setValue('https://user:pass@ejemplo.com/lista');
+    expect(component.playlistForm.controls.enlace.invalid).toBe(true);
+
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/lista');
+    expect(component.playlistForm.controls.enlace.valid).toBe(true);
+
+    expect(rooms.createPlaylist).not.toHaveBeenCalled();
+  });
+
+  it('submits a playlist, confirms privacy and keeps the public list untouched', async () => {
+    rooms.createPlaylist.mockReturnValueOnce(of(makePlaylist()));
+    const component = createComponent();
+    await component.init();
+    const listCalls = rooms.listRequests.mock.calls.length;
+
+    component.setMode('playlist');
+    component.playlistForm.setValue({
+      nombre: '  Mi mezcla  ',
+      enlace: '  https://ejemplo.com/lista  ',
+    });
+    await component.onSubmitPlaylist();
+
+    const payload = rooms.createPlaylist.mock.calls[0][2] as CreatePlaylistPayload;
+    expect(payload.nombre).toBe('Mi mezcla');
+    expect(payload.enlace).toBe('https://ejemplo.com/lista');
+    expect(payload.idempotencyKey).toBeTruthy();
+    expect(component.playlistSuccess()).toContain('Solo el DJ podrá ver esta playlist');
+    expect(component.playlistForm.controls.nombre.value).toBe('');
+    expect(rooms.listRequests.mock.calls.length).toBe(listCalls);
+  });
+
+  it('normalizes a blank playlist name to null', async () => {
+    rooms.createPlaylist.mockReturnValueOnce(of(makePlaylist(null)));
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.setValue({ nombre: '   ', enlace: 'https://ejemplo.com/lista' });
+    await component.onSubmitPlaylist();
+
+    const payload = rooms.createPlaylist.mock.calls[0][2] as CreatePlaylistPayload;
+    expect(payload.nombre).toBeNull();
+    expect(payload.enlace).toBe('https://ejemplo.com/lista');
+  });
+
+  it('reuses the playlist idempotency key when retrying after a network failure', async () => {
+    rooms.createPlaylist
+      .mockReturnValueOnce(throwError(() => new HttpErrorResponse({ status: 0 })))
+      .mockReturnValueOnce(of(makePlaylist()));
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/lista');
+
+    await component.onSubmitPlaylist();
+    await component.onSubmitPlaylist();
+
+    expect(rooms.createPlaylist).toHaveBeenCalledTimes(2);
+    const first = rooms.createPlaylist.mock.calls[0][2] as CreatePlaylistPayload;
+    const second = rooms.createPlaylist.mock.calls[1][2] as CreatePlaylistPayload;
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    expect(second.enlace).toBe(first.enlace);
+  });
+
+  it('treats changed playlist data as a new submission', async () => {
+    rooms.createPlaylist
+      .mockReturnValueOnce(throwError(() => new HttpErrorResponse({ status: 0 })))
+      .mockReturnValueOnce(throwError(() => new HttpErrorResponse({ status: 0 })));
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/lista-a');
+    await component.onSubmitPlaylist();
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/lista-b');
+    await component.onSubmitPlaylist();
+
+    const first = rooms.createPlaylist.mock.calls[0][2] as CreatePlaylistPayload;
+    const second = rooms.createPlaylist.mock.calls[1][2] as CreatePlaylistPayload;
+    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
+  it('informs playlist quota exhaustion without reopening a session', async () => {
+    rooms.createPlaylist.mockReturnValueOnce(
+      throwError(
+        () =>
+          new HttpErrorResponse({
+            status: 429,
+            error: {
+              title: 'Límite de playlists alcanzado',
+              detail: 'Se alcanzó el límite de 2 playlists por sesión.',
+            },
+          }),
+      ),
+    );
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/lista');
+    await component.onSubmitPlaylist();
+
+    expect(component.playlistError()).toContain('límite de 2 playlists');
+    expect(component.playlistError()).toContain('No se creó otra sesión');
+    expect(sessions.save).not.toHaveBeenCalled();
+  });
+
+  it('shows the shared interval wait on a playlist submission', async () => {
+    rooms.createPlaylist.mockReturnValueOnce(
+      throwError(
+        () =>
+          new HttpErrorResponse({
+            status: 429,
+            headers: new HttpHeaders({ 'Retry-After': '30' }),
+            error: {
+              title: 'Demasiadas solicitudes',
+              detail: 'Debe esperar 30 segundos entre envíos.',
+            },
+          }),
+      ),
+    );
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/lista');
+    await component.onSubmitPlaylist();
+
+    expect(component.playlistError()).toContain('Espera 30 segundos');
+  });
+
+  it('clears the playlist form errors on a new submission', async () => {
+    rooms.createPlaylist
+      .mockReturnValueOnce(of(makePlaylist()))
+      .mockReturnValueOnce(of(makePlaylist()));
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/lista');
+    await component.onSubmitPlaylist();
+    expect(component.playlistSuccess()).not.toBeNull();
+
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/otra');
+    await component.onSubmitPlaylist();
+
+    expect(component.playlistError()).toBeNull();
+    expect(component.playlistSuccess()).toContain('envió correctamente');
   });
 });

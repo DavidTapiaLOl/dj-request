@@ -66,3 +66,30 @@ export function formatRoomSchedule(
     return null;
   }
 }
+
+const SENT_FORMAT = "d MMM · HH:mm";
+
+/**
+ * Formatea la fecha de envío de una solicitud o playlist usando la zona
+ * horaria de la sala; si la fecha o la zona no son válidas, devuelve null.
+ */
+export function formatSentAt(sentAt: string, timeZone: string): string | null {
+  try {
+    const date = new Date(sentAt);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    const eventZone = timeZone && timeZone.trim() !== "" ? timeZone.trim() : null;
+    if (eventZone) {
+      try {
+        return formatInTimeZone(date, eventZone, SENT_FORMAT, { locale: es });
+      } catch {
+        // Zona IANA no reconocida: se formatea en la zona del dispositivo.
+      }
+    }
+    return format(date, SENT_FORMAT, { locale: es });
+  } catch {
+    return null;
+  }
+}

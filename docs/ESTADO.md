@@ -1,4 +1,72 @@
-﻿# DJ Requests — Estado de la tarea 11 (retención automática de salas)
+﻿# DJ Requests — Estado de la tarea 12 (playlists compartidas de extremo a extremo)
+
+## Resumen
+Playlists compartidas completas y conectadas: el invitado envía el enlace de una playlist desde la web (nuevo modo "Compartir playlist" junto al formulario de canciones) y el DJ la consulta en una pestaña nueva "Playlists" de la app móvil. Backend nuevo en `Modules/Playlists` con los mismos invariantes que las solicitudes (transacción, bloqueo sala→sesión, idempotencia antes de cuota, intervalo compartido, `no-store`) y privacidad reforzada con pruebas. Sin migraciones (la tabla `playlists_compartidas` ya existía en `InitialCore`), sin dependencias nuevas y sin cambios en contratos existentes de canciones.
+
+## Archivos creados/modificados
+### Backend
+- `backend/src/DjRequests.Api/Modules/Playlists/Dtos/` — **nuevo**: `CreatePlaylistRequest` (`Nombre?` ≤200, `Enlace` ≤2048, `IdempotencyKey`), `PlaylistResponse` (`Id`, `Nombre`, `Enlace`, `CreatedAt` — sin sesión/sala) y `PlaylistPageResponse` (`Items`, `Page`, `PageSize`, `TotalCount`, `HasMore`).
+- `backend/src/DjRequests.Api/Modules/Guests/GuestTokenValidation.cs` — **nuevo**: `ValidateRequestAsync` compartido para endpoints nuevos de invitado (hash → sala → revocación/expiración → `endsAt`/`purgeAt` → DJ activo, con precedencia 401/404 y `no-store`). Solo lo usan los endpoints nuevos; el flujo de solicitudes quedó intacto.
+- `backend/src/DjRequests.Api/Modules/Playlists/Services/PlaylistService.cs` — **nuevo**: `CreateAsync` en transacción con bloqueo en orden sala→sesión, revalidación post-lock (`abierta`, `endsAt`, `purgeAt`), idempotencia primero (mismo payload → 200 sin consumir cuota; payload distinto → 409), después cuota `MaxPlaylistsSesion` y intervalo sobre `sesion.UltimoEnvioAt` (compartido con canciones), actualiza `UltimoEnvioAt`; `ListForDjAsync` solo con `PurgeAt > now`, orden `CreatedAt DESC, Id`, paginación ≤100.
+- `backend/src/DjRequests.Api/Modules/Playlists/Endpoints/PlaylistEndpoints.cs` — **nuevo**: `POST /api/guest/rooms/{roomId:guid}/playlists` (`X-Guest-Token`, `RequireRateLimiting("guest-create")`, 201/200/400/401/404/409/429 + `Retry-After`) y `GET /api/rooms/{roomId:guid}/playlists` (política `ActiveDj`, 404 si la sala es ajena o ya purgada); `NoStoreResults` en ambas rutas.
+- `backend/src/DjRequests.Api/Program.cs` — `AddScoped<IPlaylistService, PlaylistService>()` y `app.MapPlaylistEndpoints()`.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Playlists/PlaylistEndpointsTests.cs` — **nuevo**: 36 pruebas (creación/normalización, validaciones de enlace y nombre, token 401/404, sala pausada 409 y finalizada 404, idempotencia replay/conflicto/replay con cuota llena, cuota 429, intervalo 429 con `Retry-After`, intervalo compartido canción↔playlist, concurrencia exacta 1×201+1×429, listado DJ con orden/paginación/401/otro DJ 404/tras `EndsAt` 200/tras `PurgeAt` 404/sin datos de sesión, invitado sin listado 405, `Cache-Control: no-store`).
+
+### Web de invitados
+- `web/src/app/core/models.ts` — `Playlist`, `CreatePlaylistInput`, `CreatePlaylistPayload`.
+- `web/src/app/core/guest-room.service.ts` — `createPlaylist(roomId, guestToken, payload)` → `POST /guest/rooms/{id}/playlists`.
+- `web/src/app/core/api-error.ts` — el 429 con título "Límite de playlists alcanzado" distingue el mensaje de cuota de playlist del de solicitudes.
+- `web/src/app/features/room/room.page.ts` — selector de modo (`signal<'song' | 'playlist'>`, inicial canción), formulario de playlist independiente (estado, validación estricta de URL con host y sin credenciales, idempotencia por intento reutilizable en reintento, mensajes de cuota/intervalo/red conservando lo escrito) y h2 dinámico; no se recarga el listado público tras el éxito.
+- `web/src/app/features/room/room.page.html` — `fieldset` accesible con radios segmentados ("Pedir canción" / "Compartir playlist"), formulario con labels `.sr-only` + placeholders visibles (misma excepción aprobada), nota "Solo el DJ podrá ver esta playlist" y estados de error/éxito.
+- `web/src/app/features/room/room.page.scss` — `.mode-switch` segmentado con tokens del tema, foco visible y estado activo violeta con `on-primary`.
+- `web/src/app/features/room/room.page.spec.ts` — 10 pruebas nuevas de playlists (modo, borrador al alternar, bloqueo de envío inválido, URLs rechazadas, envío con payload normalizado y privacidad, nombre en blanco → null, idempotencia reutilizada/cambiada, cuota, intervalo y limpieza de errores).
+
+### Móvil (app del DJ)
+- `mobile/src/api/dto.ts` — `PlaylistResponse` y `PlaylistPageResponse`.
+- `mobile/src/api/client.ts` — `listPlaylists(roomId, { page, pageSize })` → `GET /api/rooms/{id}/playlists`.
+- `mobile/src/utils/dateFormat.ts` — `formatSentAt(sentAt, timeZone)` con `d MMM · HH:mm` en la zona de la sala.
+- `mobile/app/(app)/room/[id].tsx` — pestañas "Solicitudes" (inicial) y "Playlists" con `accessibilityRole="tablist"/"tab"` y carga perezosa (solo al abrir la pestaña, con refresco y "Cargar más"); tarjeta con nombre o "Playlist sin nombre", fecha de envío, "Abrir playlist" (`Linking` en nativo, `<a target="_blank" rel="noopener noreferrer">` en web), estados de carga/vacío/error con "Reintentar"; sin acciones de estado ni votos.
+
+## Resultados reales (verificados con evidencia)
+Estado de código al que corresponden todas las ejecuciones: rama `feat/shared-playlists`, **HEAD `4be73f5` con los cambios de la tarea 12 sin commitear**. Las pruebas verificaron **el árbol de trabajo**, no el contenido del commit `4be73f5`: los resultados no se atribuyen únicamente a `4be73f5`. La relación temporal confirma que ningún archivo afectado cambió después de cada ejecución:
+
+| Comprobación | Evidencia | Estado verificado |
+|---|---|---|
+| Suite backend 344/344 | **Archivo** `C:\Users\juand\AppData\Local\Temp\opencode\full-suite.out.log` (1883 bytes, escrito 2026-11-12 00:10:38); `full-suite.err.log` vacío (0 bytes) | Último fuente backend 00:07:37 < ejecución 00:08:36–00:10:38; sin cambios backend posteriores |
+| Build backend | Incluido en el log anterior (compiló `DjRequests.Api` y `DjRequests.IntegrationTests`, ambas DLL generadas) | Idéntico al de la suite |
+| Pruebas web 45/45 | **Solo consola de sesión** (sin archivo); última ejecución inicio 00:17:17, 7 archivos | Último fuente web 00:16:56 < build 00:17:01 < pruebas 00:17:17; sin cambios web posteriores |
+| Build web | **Solo consola de sesión**; salida `web\dist\dj-requests-web` con fecha 00:17:01 | Mismo estado que las pruebas web |
+| Typecheck y lint móvil | **Solo consola de sesión** (ejecución final posterior a 00:22:21) | Último fuente móvil 00:22:21; sin cambios móviles posteriores |
+| Export web móvil | **Solo consola de sesión**; `mobile\dist` recreado 00:24:01 | Mismo estado que typecheck/lint |
+
+- **Suite completa backend**: **344 correctas, 0 con error, 0 omitidas**, total 344, duración 1 min 54 s. El ensamblado compilado en esa ejecución (DLL de pruebas 00:07:54) **contiene** las pruebas de playlists (`findstr` encuentra `PlaylistEndpointsTests` y `Create_ValidPlaylist`); el log no enumera tests individuales, así que la inclusión de los 36 nuevos se confirma por el DLL y por el conteo 308 previos + 36.
+- **Advertencias del build backend en ese log**: solo licencia de `SixLabors.ImageSharp 4.1.3` (4 líneas del mismo aviso). **CS0618 no aparece en este log**: la afirmación habitual de "2 advertencias preexistentes (licencia + CS0618)" queda **no confirmada por esta evidencia** (se reportó en tareas anteriores, fuera de este log).
+- **Pruebas playlists de forma aislada**: 36/36 con PostgreSQL 17 (Testcontainers) — **solo consola de sesión** (ejecución anterior a la suite; sin archivo de log).
+- **Pruebas web**: 7 archivos, **45 correctas, 0 fallidas**. La primera ejecución dio 44/45 por un mock del test sin segunda respuesta; se corrigió solo el test y se repitió, obteniendo 45/45. El archivo de pruebas no cambió después (`00:15:37`), por lo que el 45/45 final cubre el estado actual.
+- **Build web**: ejecución final **correcta, sin avisos**. Las dos ejecuciones previas del mismo código emitieron aviso de presupuesto del componente `room.page.scss` (150 y 61 bytes sobre 4 kB); se recortaron reglas redundantes en vez de subir el presupuesto.
+- **TypeScript móvil**: `npx tsc --noEmit` **0 errores** en la ejecución final (la primera, anterior, falló con `TS1382` en `[id].tsx` y se corrigió).
+- **Lint móvil**: `npx expo lint` **0 errores y 0 avisos** en la ejecución final. El único log de lint persistido (`...\opencode\tool-output\tool_1ce6b8107001JBtelqkZqHUFlJ`, 00:21:54, 5346 problemas) corresponde a la **primera ejecución fallida** que lintea `mobile/dist`; no refleja el estado final. Se retiró ese `dist/` (artefacto gitignored, regenerable) porque ESLint lo procesaba como bundle Metro.
+- **Export web móvil**: `npx expo export --platform web` **correcto**, bundle 2.66 MB, 27 archivos.
+- **`git diff --check`**: código de salida 0 tras las ediciones de documentación; solo avisos LF→CRLF propios del repositorio (no son errores de espacios).
+- **Git**: las verificaciones anteriores se ejecutaron **antes de crear el commit de la tarea 12** (árbol de trabajo sin commitear sobre `4be73f5`); este documento se incorpora a ese commit y no altera lo verificado. En ese momento no había push de la tarea.
+- **Confirmación del usuario**: «El usuario confirmó que realizó el recorrido manual de playlists y funcionó correctamente». Es una confirmación **del usuario**, no una inspección visual realizada por el agente: el agente no ejecutó recorrido manual ni inspección visual.
+- Sin migraciones generadas ni aplicadas; `dj_requests` no fue tocada. Sin dependencias nuevas. `Retention:Enabled` sigue `false`.
+
+### Evidencia no válida o no confirmada
+- **Inspección visual por parte del agente** en navegador o dispositivo: **no realizada**; compilar y pasar pruebas no acredita el aspecto del selector web ni de las pestañas móviles. El único resultado funcional manual proviene de la confirmación del usuario (ver arriba).
+- **Logs persistidos de pruebas web, build web, typecheck/lint final y export móvil**: no existen; solo hay salida de consola de la sesión.
+- `mobile/export.log` (18/10/2026) y `backend\tests\DjRequests.IntegrationTests\TestResults\test_results.trx` (12/10/2026, 1 test fallido antiguo): **obsoletos**, no son evidencia de esta tarea.
+- No existe script `lint` en `web/package.json`; no aplica lint en la web.
+
+## Límites y pendientes
+- El agente no ejecutó inspección visual en navegador ni en dispositivo: compilar y pasar las pruebas no acredita el aspecto final del selector web ni de las pestañas móviles. El funcionamiento manual lo verificó **el usuario** («realizó el recorrido manual de playlists y funcionó correctamente»), confirmación distinta de una inspección del agente.
+- El invitado no tiene listado de playlists (GET de invitado → 405) por privacidad; el DJ es quien las consulta.
+- Intervalo de envío entre canción y playlist comparte `ultimo_envio_at`: un envío de cualquiera retrasa el siguiente 30 s (decisión del diseño, cubierta por prueba).
+- Sin WebSockets/polling: ambas pantallas usan carga/refresco manual, igual que las solicitudes.
+
+---
+
+# DJ Requests — Estado de la tarea 11 (retención automática de salas)
 
 ## Resumen
 Retención automática en backend: `RetentionService` borra físicamente las salas con `purge_at <= now UTC` junto con su contenido temporal (sesiones, solicitudes y playlists) mediante las cascadas existentes, preservando DJ, perfil, foto, géneros y salas vigentes. `RetentionWorker` ejecuta el servicio en lotes desde un `BackgroundService`. Sin migraciones ni dependencias nuevas; `Retention:Enabled=false` por defecto.

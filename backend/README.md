@@ -443,6 +443,36 @@ La validación de la credencial se consulta **antes** de aplicar el límite, de 
 
 ---
 
+## Playlists Endpoints
+Módulo `Modules/Playlists`. Usa la validación compartida de token de invitado (`GuestTokenValidation`) con la misma precedencia 401/404 y `Cache-Control: no-store` que los endpoints de invitado. `GET` bajo la ruta de invitado no existe (405): las playlists solo las ve el DJ propietario.
+
+### POST /api/guest/rooms/{roomId}/playlists
+Crea una playlist de la sesión del invitado (requiere `X-Guest-Token` y política `guest-create`).
+
+```json
+{
+  "nombre": "Mi mezcla (opcional, hasta 200 caracteres)",
+  "enlace": "https://open.example.com/playlist/abc",
+  "idempotencyKey": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+}
+```
+
+- **201 Created** con `PlaylistResponse`: `{ "id", "nombre", "enlace", "createdAt" }` (sin sesión, sala ni clave).
+- **200 OK**: mismo payload de idempotencia reenviado sin cambios (no consume cuota ni intervalo).
+- **400**: `enlace` ausente, vacía, >2048, no absoluta, sin host o con credenciales; `nombre` >200; `idempotencyKey` ausente/inválido.
+- **401**: token ausente, malformado, desconocido, revocado o expirado. **404**: sala ajena/finalizada/purgada o token de otra sala.
+- **409**: `enlace` de una sala en estado distinto de `abierta`, o clave repetida con payload diferente.
+- **429** con `Retry-After`: cuota `max_playlists_sesion` (default 2) alcanzada (título "Límite de playlists alcanzado") o intervalo `intervalo_envio_segundos` desde el último envío de **cualquier contenido** de esa sesión (título "Demasiadas solicitudes"). El límite se aplica de forma atómica bloqueando en orden sala→sesión y revalidando tras el bloqueo; en concurrencia exacta, 1×201 + 1×429.
+
+### GET /api/rooms/{roomId}/playlists?page=1&pageSize=20
+Listado paginado de playlists de la sala para su DJ (bearer + política `ActiveDj`).
+
+- **200 OK** con `PlaylistPageResponse`: `{ "items": [...], "page", "pageSize", "totalCount", "hasMore" }`; orden `createdAt` descendente (`created_at`, `id`), `pageSize` 1–100.
+- **404**: sala inexistente, **de otro DJ** o ya purgada (`purge_at <= now`); dentro de la ventana de retención (tras `ends_at` y antes de `purge_at`) la sala sigue consultable.
+- **401/403**: sin token o sin política `ActiveDj`.
+
+---
+
 ## Retención de salas
 El worker `RetentionWorker` borra físicamente las salas vencidas y su contenido temporal (sesiones, solicitudes y playlists) mediante las cascadas existentes. **No se ejecuta contra `dj_requests` en las pruebas**; las suites usan bases desechables de Testcontainers.
 

@@ -16,6 +16,7 @@ import { GenreService } from '../../core/genre.service';
 import { newIdempotencyKey } from '../../core/ids';
 import { formatSchedule, roomStateLabel, solicitudEstadoLabel } from '../../core/labels';
 import {
+  CreatePlaylistInput,
   CreateSolicitudInput,
   Genero,
   GuestSession,
@@ -47,6 +48,13 @@ export class RoomPage implements OnInit {
     enlace: ['', [Validators.maxLength(2048), httpUrlValidator]],
   });
 
+  readonly playlistForm = this.formBuilder.nonNullable.group({
+    nombre: ['', [Validators.maxLength(200)]],
+    enlace: ['', [nonBlankValidator, Validators.maxLength(2048), playlistUrlValidator]],
+  });
+
+  readonly mode = signal<'song' | 'playlist'>('song');
+
   readonly room = signal<RoomMinimal | null>(null);
   readonly djName = signal<string | null>(null);
   readonly items = signal<Solicitud[]>([]);
@@ -59,14 +67,18 @@ export class RoomPage implements OnInit {
   readonly loadingList = signal(false);
   readonly loadingMore = signal(false);
   readonly submitting = signal(false);
+  readonly playlistSubmitting = signal(false);
 
   readonly sessionExpired = signal(false);
   readonly roomError = signal<string | null>(null);
   readonly listError = signal<string | null>(null);
   readonly submitError = signal<string | null>(null);
   readonly submitSuccess = signal<string | null>(null);
+  readonly playlistError = signal<string | null>(null);
+  readonly playlistSuccess = signal<string | null>(null);
   readonly genresError = signal(false);
   readonly submitted = signal(false);
+  readonly playlistSubmitted = signal(false);
 
   readonly schedule = computed(() => {
     const room = this.room();
@@ -97,6 +109,7 @@ export class RoomPage implements OnInit {
 
   private session: GuestSession | null = null;
   private pendingAttempt: { fingerprint: string; idempotencyKey: string } | null = null;
+  private pendingPlaylistAttempt: { fingerprint: string; idempotencyKey: string } | null = null;
 
   ngOnInit(): void {
     void this.init();
@@ -174,6 +187,49 @@ export class RoomPage implements OnInit {
     }
   }
 
+  setMode(mode: 'song' | 'playlist'): void {
+    this.mode.set(mode);
+  }
+
+  async onSubmitPlaylist(): Promise<void> {
+    this.playlistSubmitted.set(true);
+    this.playlistError.set(null);
+    this.playlistSuccess.set(null);
+
+    if (this.playlistSubmitting() || !this.session) {
+      if (!this.session) this.sessionExpired.set(true);
+      return;
+    }
+
+    if (this.playlistForm.invalid) return;
+
+    const input = this.buildPlaylistInput();
+    const fingerprint = JSON.stringify(input);
+    const idempotencyKey =
+      this.pendingPlaylistAttempt?.fingerprint === fingerprint
+        ? this.pendingPlaylistAttempt.idempotencyKey
+        : newIdempotencyKey();
+    this.pendingPlaylistAttempt = { fingerprint, idempotencyKey };
+
+    this.playlistSubmitting.set(true);
+    try {
+      await firstValueFrom(
+        this.rooms.createPlaylist(this.session.room.id, this.session.guestToken, {
+          ...input,
+          idempotencyKey,
+        }),
+      );
+      this.pendingPlaylistAttempt = null;
+      this.playlistForm.reset({ nombre: '', enlace: '' });
+      this.playlistSubmitted.set(false);
+      this.playlistSuccess.set('Tu playlist se envió correctamente. Solo el DJ podrá ver esta playlist.');
+    } catch (error) {
+      this.handlePlaylistSubmitError(error);
+    } finally {
+      this.playlistSubmitting.set(false);
+    }
+  }
+
   showError(field: 'nombre' | 'artista' | 'enlace'): boolean {
     const control = this.form.controls[field];
     return control.invalid && (control.touched || this.submitted());
@@ -188,6 +244,29 @@ export class RoomPage implements OnInit {
         : 'Máximo 200 caracteres.';
     }
     if (control.hasError('pattern')) return 'El enlace debe empezar por http:// o https://.';
+    return 'Revisa este campo.';
+  }
+
+  showPlaylistError(field: 'nombre' | 'enlace'): boolean {
+    const control = this.playlistForm.controls[field];
+    return control.invalid && (control.touched || this.playlistSubmitted());
+  }
+
+  errorPlaylistFor(field: 'nombre' | 'enlace'): string {
+    const control = this.playlistForm.controls[field];
+    if (control.hasError('required')) {
+      return field === 'enlace'
+        ? 'El enlace de la playlist es obligatorio.'
+        : 'Este campo es obligatorio.';
+    }
+    if (control.hasError('maxlength')) {
+      return field === 'enlace'
+        ? 'El enlace no puede superar 2048 caracteres.'
+        : 'Máximo 200 caracteres.';
+    }
+    if (control.hasError('pattern')) {
+      return 'El enlace debe ser una URL http:// o https:// válida, con dominio y sin credenciales.';
+    }
     return 'Revisa este campo.';
   }
 
@@ -214,6 +293,50 @@ export class RoomPage implements OnInit {
       generoId: value.generoId ?? null,
       enlace: optionalText(value.enlace),
     };
+  }
+
+  private buildPlaylistInput(): CreatePlaylistInput {
+    const value = this.playlistForm.getRawValue();
+    return {
+      nombre: optionalText(value.nombre),
+      enlace: value.enlace.trim(),
+    };
+  }
+
+  private handlePlaylistSubmitError(error: unknown): void {
+    if (!(error instanceof HttpErrorResponse)) {
+      this.playlistError.set('Ocurrió un error inesperado. Inténtalo de nuevo.');
+      return;
+    }
+
+    const mapped = mapHttpError(error);
+    if (mapped.kind === 'session') {
+      this.expireSession();
+      return;
+    }
+
+    if (mapped.kind === 'network' || mapped.kind === 'server') {
+      this.playlistError.set(`${mapped.message} Puedes reintentar sin cambiar los datos.`);
+      return;
+    }
+
+    this.pendingPlaylistAttempt = null;
+
+    if (mapped.kind === 'quota') {
+      const maxPlaylists = this.room()?.maxPlaylistsSesion ?? 2;
+      this.playlistError.set(
+        `Has alcanzado el límite de ${maxPlaylists} playlists de esta sesión. No se creó otra sesión.`,
+      );
+      return;
+    }
+
+    if (mapped.kind === 'rateLimited' && mapped.retryAfterSeconds !== null) {
+      this.playlistError.set(`${mapped.message} Espera ${mapped.retryAfterSeconds} segundos.`);
+      return;
+    }
+
+    const fieldMessage = mapped.fieldErrors['Enlace'] ?? mapped.fieldErrors['Nombre'];
+    this.playlistError.set(fieldMessage || mapped.message);
   }
 
   private handleSubmitError(error: unknown): void {
@@ -355,4 +478,23 @@ function httpUrlValidator(control: AbstractControl): ValidationErrors | null {
   const value = typeof control.value === 'string' ? control.value.trim() : '';
   if (value.length === 0) return null;
   return HTTP_URL_PATTERN.test(value) ? null : { pattern: true };
+}
+
+// Validacion estricta del enlace de playlist: coincide con las reglas del
+// backend (URL absoluta http/https, con dominio y sin credenciales).
+function playlistUrlValidator(control: AbstractControl): ValidationErrors | null {
+  const value = typeof control.value === 'string' ? control.value.trim() : '';
+  if (value.length === 0) return null;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return { pattern: true };
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return { pattern: true };
+  if (!url.host) return { pattern: true };
+  if (url.username || url.password) return { pattern: true };
+  return null;
 }

@@ -1,5 +1,6 @@
 import {
   MeResponse,
+  PlaylistPageResponse,
   ProfilePhotoUpload,
   ProfileResponse,
   SolicitudPageResponse,
@@ -315,6 +316,21 @@ export async function updateSolicitudState(
     `/api/rooms/${roomId}/requests/${solicitudId}`,
     { body: { estado, version } }
   );
+}
+
+// --- Playlists compartidas (solo DJ) ---
+
+export async function listPlaylists(
+  roomId: string,
+  params?: { page?: number; pageSize?: number }
+): Promise<PlaylistPageResponse> {
+  const queryParams = new URLSearchParams();
+  if (params?.page) queryParams.set("page", String(params.page));
+  if (params?.pageSize) queryParams.set("pageSize", String(params.pageSize));
+
+  const qs = queryParams.toString();
+  const path = `/api/rooms/${roomId}/playlists${qs ? `?${qs}` : ""}`;
+  return await request<PlaylistPageResponse>("GET", path);
 }
 
 // --- Perfil del DJ ---

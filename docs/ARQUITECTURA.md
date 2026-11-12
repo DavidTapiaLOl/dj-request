@@ -40,6 +40,14 @@ Invitado: token opaco aleatorio, limitado a sala, expirable y revocable; guardar
 - Procesamiento: JPEG/PNG, 5 MB, máximo 50 millones de píxeles de origen, dimensión final máxima de 2048 px y eliminación de EXIF/IPTC/XMP. El reemplazo guarda primero la nueva imagen y conserva la anterior si falla la persistencia.
 - El backend usa `SixLabors.ImageSharp` 4.1.3. Los builds Debug funcionan; antes de publicar un build Release debe resolverse su requisito de licencia comercial o sustituirse por una alternativa compatible.
 
+## Playlists compartidas (implementado)
+- Módulo `Modules/Playlists` (`Dtos`, `Services/PlaylistService`, `Endpoints/PlaylistEndpoints`). La tabla `playlists_compartidas` ya existía en `InitialCore`; no se creó ninguna migración nueva.
+- Creación: `POST /api/guest/rooms/{roomId}/playlists` con `X-Guest-Token` y política `guest-create`. `nombre` opcional (vacío → null, ≤200 tras trim), `enlace` obligatorio (≤2048, absoluta HTTP/HTTPS, con host y sin credenciales). Transacción con bloqueo en orden sala→sesión y revalidación post-lock (`abierta`, `endsAt`, `purgeAt`, DJ activo). Orden de decisión: idempotencia primero (mismo `idempotencyKey` + mismo payload → 200 sin consumir cuota; payload distinto → 409) después cuota `MaxPlaylistsSesion` y finalmente intervalo sobre `sesion.UltimoEnvioAt`, que es el mismo campo que usa el envío de canciones (un envío de cualquiera retrasa el siguiente). 429 con `Retry-After`; 409 para sala pausada; `Cache-Control: no-store`.
+- Consulta: `GET /api/rooms/{roomId}/playlists` con bearer + política `ActiveDj`. Solo el propietario (404 para otro DJ o sala inexistente/purgada), solo con `purge_at > now` (después del fin y dentro de la ventana de retención sigue disponible), paginación `page`/`pageSize` ≤100, orden `created_at DESC, id`. El DTO no expone `SesionId`, `SalaId` ni idempotencia.
+- No existe listado ni detalle para invitados (`GET` bajo `/api/guest/.../playlists` → 405): las playlists son privadas del DJ. La validación de token compartida (`GuestTokenValidation`) solo la consumen los endpoints nuevos; el flujo de solicitudes no cambió.
+- Web de invitados: la sala incorpora un selector segmentado accesible (`fieldset` + radios) entre "Pedir canción" y "Compartir playlist", con formularios independientes; el invitado solo envía y recibe acuse ("Solo el DJ podrá ver esta playlist").
+- App del DJ: pestaña "Playlists" en el detalle de sala, con carga perezosa, refresco, paginación, fecha formateada en la zona de la sala y acción "Abrir playlist" (enlace externo validado). Sin acciones de estado ni votos.
+
 ## Retención y operación
 Usar UTC, TimeProvider inyectable y timestamptz. Persistir zona IANA del evento para presentación. Ventana de retención: 168 horas exactas tras ends_at.
 

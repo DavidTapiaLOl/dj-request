@@ -9,6 +9,8 @@ using DjRequests.Api.Modules.Guests.Endpoints;
 using DjRequests.Api.Modules.Guests.Options;
 using DjRequests.Api.Modules.Guests.Services;
 using DjRequests.Api.Modules.Health;
+using DjRequests.Api.Modules.Playlists.Endpoints;
+using DjRequests.Api.Modules.Playlists.Services;
 using DjRequests.Api.Modules.Profiles.Endpoints;
 using DjRequests.Api.Modules.Profiles.Options;
 using DjRequests.Api.Modules.Profiles.Services;
@@ -207,6 +209,7 @@ builder.Services.AddSingleton<IRoomCodeGenerator, RoomCodeGenerator>();
 builder.Services.AddSingleton<IGuestTokenGenerator, GuestTokenGenerator>();
 builder.Services.AddScoped<IGuestSessionService, GuestSessionService>();
 builder.Services.AddScoped<ISolicitudService, SolicitudService>();
+builder.Services.AddScoped<IPlaylistService, PlaylistService>();
 
 builder.Services.AddOptions<FileStorageOptions>()
     .Bind(builder.Configuration.GetSection(FileStorageOptions.SectionName))
@@ -304,6 +307,7 @@ app.MapAuthEndpoints();
 app.MapRoomEndpoints();
 app.MapGuestEndpoints();
 app.MapSolicitudEndpoints();
+app.MapPlaylistEndpoints();
 app.MapProfileEndpoints();
 
 app.Run();

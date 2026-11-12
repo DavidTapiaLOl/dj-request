@@ -69,11 +69,14 @@ export function mapHttpError(error: HttpErrorResponse): ApiError {
       };
     case 429: {
       const text = `${body?.title ?? ''} ${body?.detail ?? ''}`;
-      const isQuota = /l[íi]mite de solicitudes/i.test(text);
+      const isQuota = /l[íi]mite de (solicitudes|playlists)/i.test(text);
+      const isPlaylistQuota = /playlist/i.test(text);
       return {
         kind: isQuota ? 'quota' : 'rateLimited',
         message: isQuota
-          ? 'Has alcanzado el límite de solicitudes de esta sesión.'
+          ? isPlaylistQuota
+            ? 'Has alcanzado el límite de playlists de esta sesión.'
+            : 'Has alcanzado el límite de solicitudes de esta sesión.'
           : (body?.detail ?? 'Estás enviando solicitudes demasiado rápido.'),
         retryAfterSeconds,
         fieldErrors,
