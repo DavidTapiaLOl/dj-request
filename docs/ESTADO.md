@@ -6,19 +6,19 @@ Retención automática en backend: `RetentionService` borra físicamente las sal
 ## Archivos creados/modificados
 - `backend/src/DjRequests.Api/Modules/Retention/Options/RetentionOptions.cs` — **nuevo**: `SectionName = "Retention"`, `Enabled`, `IntervalMinutes`, `BatchSize`.
 - `backend/src/DjRequests.Api/Modules/Retention/Options/RetentionOptionsValidator.cs` — **nuevo**: `IntervalMinutes > 0` y `BatchSize` entre 1 y 1000; registrado con `ValidateOnStart`.
-- `backend/src/DjRequests.Api/Modules/Retention/Services/IRetentionService.cs` — **nuevo**: `PurgeExpiredBatchAsync` devuelve `RetentionBatchResult(DeletedRooms)`.
-- `backend/src/DjRequests.Api/Modules/Retention/Services/RetentionService.cs` — **nuevo**: dos fases — selección de IDs sin bloqueo y, en transacción corta, `SELECT ... FOR UPDATE SKIP LOCKED` sobre `salas` ordenado por `purge_at, id`, revalidación con `timeProvider.GetUtcNow()` **post-lock** y `ExecuteDeleteAsync` con guard `PurgeAt <= nowAfterLock` (cascadas eliminan sesiones, solicitudes y playlists).
-- `backend/src/DjRequests.Api/Modules/Retention/Services/RetentionWorker.cs` — **nuevo**: `BackgroundService`; si está deshabilitado registra el motivo y no ejecuta pasadas; primera pasada inmediata al arrancar; drena lotes mientras `DeletedRooms >= BatchSize`; una excepción se registra como fallo operativo y espera `IntervalMinutes` sin bucle de reintentos.
+- `backend/src/DjRequests.Api/Modules/Retention/Services/IRetentionService.cs` — **nuevo**: `PurgeExpiredBatchAsync` devuelve `RetentionBatchResult(SelectedRooms, DeletedRooms)` (filas bloqueadas del lote y filas eliminadas).
+- `backend/src/DjRequests.Api/Modules/Retention/Services/RetentionService.cs` — **nuevo**: en transacción corta, una sola consulta `SELECT ... ORDER BY purge_at, id LIMIT BatchSize FOR UPDATE SKIP LOCKED` sobre `salas` selecciona y bloquea las salas vencidas disponibles (las bloqueadas por otra transacción se omiten y el escaneo continúa con las siguientes); revalidación con `timeProvider.GetUtcNow()` **post-lock** y `ExecuteDeleteAsync` con guard `PurgeAt <= nowAfterLock` (cascadas eliminan sesiones, solicitudes y playlists).
+- `backend/src/DjRequests.Api/Modules/Retention/Services/RetentionWorker.cs` — **nuevo**: `BackgroundService`; si está deshabilitado registra el motivo y no ejecuta pasadas; primera pasada inmediata al arrancar; drena lotes mientras el lote venga completo (`SelectedRooms >= BatchSize`) y se borre al menos una sala; una excepción se registra como fallo operativo y espera `IntervalMinutes` sin bucle de reintentos; las filas bloqueadas quedan para la siguiente pasada.
 - `backend/src/DjRequests.Api/Program.cs` — registro de `RetentionOptions` con binding, validador `IValidateOptions` y `ValidateOnStart`; `IRetentionService` scoped; `AddHostedService<RetentionWorker>`.
 - `backend/src/DjRequests.Api/appsettings.json` — sección `Retention`: `Enabled=false`, `IntervalMinutes=15`, `BatchSize=100`.
 - `backend/tests/DjRequests.IntegrationTests/Fixtures/WebAppFactory.cs` — fuerza `Retention:Enabled=false` por defecto en memoria (permite override por prueba) para que User Secrets locales no activen la limpieza; `FakeTimeProvider` ahora implementa `CreateTimer`/`ITimer` para que `Advance` dispare timers (antes solo movía el reloj).
-- Pruebas nuevas: `Modules/Retention/RetentionServiceTests.cs` (10 escenarios), `RetentionOptionsValidationTests.cs` (9 casos), `RetentionWorkerTests.cs` (3).
+- Pruebas nuevas: `Modules/Retention/RetentionServiceTests.cs` (11 escenarios), `RetentionOptionsValidationTests.cs` (9 casos), `RetentionWorkerTests.cs` (5).
 
 ## Resultados reales
 - **Build backend**: `dotnet build backend\DjRequests.slnx` correcto, 0 errores, 2 advertencias preexistentes (licencia Six Labors y CS0618).
-- **Pruebas de retención**: `dotnet test ... --filter "FullyQualifiedName~Modules.Retention"` → **22/22 correctas** con PostgreSQL/Testcontainers (incluye revalidación post-lock con `RoomLockPauseInterceptor`, rollback con trigger `RAISE EXCEPTION` y concurrencia con `Task.WhenAll`).
-- **Suite completa**: `dotnet test backend\DjRequests.slnx --no-build` → **305/305 correctas**.
-- **Git**: rama `feat/dj-profile`, sin commit ni push; cambios de la tarea 10 conservados.
+- **Pruebas de retención**: `dotnet test ... --filter "FullyQualifiedName~Modules.Retention"` → **25/25 correctas** con PostgreSQL/Testcontainers (incluye revalidación post-lock con `RoomLockPauseInterceptor`, rollback con trigger `RAISE EXCEPTION`, concurrencia con `Task.WhenAll` y salto de filas bloqueadas con transacción independiente).
+- **Suite completa**: `dotnet test backend\DjRequests.slnx --no-build` → **308/308 correctas**.
+- **Git**: la tarea 11 quedó incluida en el commit `42fe587`; esta corrección de selección de lotes se registra en un commit posterior de esta misma rama.
 - La limpieza **no** se ejecutó contra `dj_requests`; permanece deshabilitada por defecto.
 
 ## Límites y pendientes

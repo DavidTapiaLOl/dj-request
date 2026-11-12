@@ -63,6 +63,44 @@ public class RetentionWorkerTests
         Assert.Equal(2, harness.Service.Calls);
     }
 
+    [Fact]
+    public async Task Worker_DrainsWhileSelectionIsFull_StopsWhenSelectionIsShorter()
+    {
+        await using var harness = WorkerHarness.Create(enabled: true, batchSize: 2);
+        harness.Service.Enqueue(
+            new RetentionBatchResult(2, 2),
+            new RetentionBatchResult(2, 2),
+            new RetentionBatchResult(1, 1));
+        var worker = harness.CreateWorker();
+
+        await worker.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => harness.Service.Calls >= 3);
+
+        // Tras una seleccion corta la pasada termina: no vuelve a llamar.
+        await Task.Delay(150);
+        Assert.Equal(3, harness.Service.Calls);
+        Assert.Contains(harness.Logger.Messages, m => m.Contains("5 salas"));
+
+        await worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Worker_FullSelectionWithoutDeletions_DoesNotLoopForever()
+    {
+        await using var harness = WorkerHarness.Create(enabled: true, batchSize: 2);
+        harness.Service.OnCall = _ => new RetentionBatchResult(2, 0);
+        var worker = harness.CreateWorker();
+
+        await worker.StartAsync(CancellationToken.None);
+        await Task.Delay(200);
+
+        // Una seleccion completa sin borrados no justifica repetir la misma pagina.
+        Assert.Equal(1, harness.Service.Calls);
+        Assert.Contains(harness.Logger.Messages, m => m.Contains("0 salas"));
+
+        await worker.StopAsync(CancellationToken.None);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMilliseconds = 5000)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -79,11 +117,22 @@ public class RetentionWorkerTests
 
     private sealed class FakeRetentionService : IRetentionService
     {
+        private readonly ConcurrentQueue<RetentionBatchResult> _scripted = new();
         private int _calls;
 
         public int Calls => Volatile.Read(ref _calls);
 
         public int FailuresBeforeSuccess { get; set; }
+
+        public Func<int, RetentionBatchResult>? OnCall { get; set; }
+
+        public void Enqueue(params RetentionBatchResult[] results)
+        {
+            foreach (var result in results)
+            {
+                _scripted.Enqueue(result);
+            }
+        }
 
         public Task<RetentionBatchResult> PurgeExpiredBatchAsync(CancellationToken cancellationToken = default)
         {
@@ -93,7 +142,17 @@ public class RetentionWorkerTests
                 throw new InvalidOperationException("fallo transitorio de prueba");
             }
 
-            return Task.FromResult(new RetentionBatchResult(0));
+            if (_scripted.TryDequeue(out var scripted))
+            {
+                return Task.FromResult(scripted);
+            }
+
+            if (OnCall is not null)
+            {
+                return Task.FromResult(OnCall(call));
+            }
+
+            return Task.FromResult(new RetentionBatchResult(0, 0));
         }
     }
 
@@ -148,7 +207,10 @@ public class RetentionWorkerTests
 
         public ListLogger Logger { get; }
 
-        public static WorkerHarness Create(bool enabled, int failuresBeforeSuccess = 0)
+        public static WorkerHarness Create(
+            bool enabled,
+            int failuresBeforeSuccess = 0,
+            int batchSize = 100)
         {
             var service = new FakeRetentionService { FailuresBeforeSuccess = failuresBeforeSuccess };
             var time = new FakeTimeProvider();
@@ -160,7 +222,7 @@ public class RetentionWorkerTests
             {
                 Enabled = enabled,
                 IntervalMinutes = 15,
-                BatchSize = 100
+                BatchSize = batchSize
             }));
             services.AddSingleton<TimeProvider>(time);
             services.AddSingleton<ILogger<RetentionWorker>>(logger);

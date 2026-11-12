@@ -23,38 +23,33 @@ public sealed class RetentionService : IRetentionService
 
     public async Task<RetentionBatchResult> PurgeExpiredBatchAsync(CancellationToken cancellationToken = default)
     {
-        // Hora de elegibilidad: solo candidatos con PurgeAt <= ahora.
+        // Hora de elegibilidad para la consulta de seleccion.
         var now = _timeProvider.GetUtcNow();
 
-        var candidateIds = await _context.Salas
-            .AsNoTracking()
-            .Where(s => s.PurgeAt <= now)
-            .OrderBy(s => s.PurgeAt)
-            .ThenBy(s => s.Id)
-            .Take(_options.BatchSize)
-            .Select(s => s.Id)
-            .ToListAsync(cancellationToken);
-
-        if (candidateIds.Count == 0)
-        {
-            return new RetentionBatchResult(0);
-        }
-
-        // Transaccion corta: solo bloqueo, revalidacion y borrado.
+        // Transaccion corta: seleccion y bloqueo en la misma consulta,
+        // revalidacion y borrado.
         await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
-        // Bloqueo de fila en orden estable (purge_at, id) con SKIP LOCKED para
-        // coordinar varias instancias sin esperas ni bloqueos cruzados.
-        var ids = candidateIds.ToArray();
+        // Seleccionar y bloquear en una sola consulta: SKIP LOCKED salta las
+        // filas que otra transaccion ya bloqueo y sigue el escaneo, de modo que
+        // LIMIT llena el lote con las siguientes salas vencidas disponibles.
+        // Orden estable (purge_at, id); LIMIT parametrizado.
         var locked = await _context.Salas
             .FromSqlInterpolated($"""
                 SELECT * FROM salas
-                WHERE id = ANY({ids})
+                WHERE purge_at <= {now}
                 ORDER BY purge_at, id
+                LIMIT {_options.BatchSize}
                 FOR UPDATE SKIP LOCKED
                 """)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
+
+        if (locked.Count == 0)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new RetentionBatchResult(0, 0);
+        }
 
         // Hora POST-bloqueo: unica fuente de verdad de la revalidacion.
         var nowAfterLock = _timeProvider.GetUtcNow();
@@ -67,7 +62,7 @@ public sealed class RetentionService : IRetentionService
         if (expiredIds.Length == 0)
         {
             await transaction.CommitAsync(cancellationToken);
-            return new RetentionBatchResult(0);
+            return new RetentionBatchResult(locked.Count, 0);
         }
 
         // Solo se borran salas; las cascadas de PostgreSQL eliminan el contenido
@@ -79,6 +74,6 @@ public sealed class RetentionService : IRetentionService
 
         await transaction.CommitAsync(cancellationToken);
 
-        return new RetentionBatchResult(deleted);
+        return new RetentionBatchResult(locked.Count, deleted);
     }
 }

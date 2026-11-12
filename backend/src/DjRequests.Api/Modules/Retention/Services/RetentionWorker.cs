@@ -67,7 +67,12 @@ public sealed class RetentionWorker : BackgroundService
                 var result = await service.PurgeExpiredBatchAsync(cancellationToken);
                 totalDeleted += result.DeletedRooms;
 
-                if (result.DeletedRooms < options.BatchSize)
+                // Solo se sigue drenando si el lote devolvio la pagina completa:
+                // puede quedar mas trabajo disponible. La cantidad borrada no
+                // agota por si sola el trabajo (puede ser menor por descartes de
+                // revalidacion) y una seleccion sin borrados no justifica
+                // repetir contra las mismas filas.
+                if (result.SelectedRooms < options.BatchSize || result.DeletedRooms == 0)
                 {
                     break;
                 }

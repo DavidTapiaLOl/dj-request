@@ -560,10 +560,11 @@ public class RetentionServiceTests
         var lockPause = factory.RoomLockPause!;
         var purgeTask = Task.Run(() => RunPurgeAsync(factory));
 
-        // El limpiador ya eligio la sala como candidata y pausa antes del FOR UPDATE.
+        // El limpiador pausa antes de ejecutar la consulta que selecciona y bloquea.
         await lockPause.Paused.WaitAsync(TimeSpan.FromSeconds(10));
 
-        // Otra transaccion extiende PurgeAt mientras el limpiador aun no bloqueo.
+        // Otra transaccion extiende PurgeAt mientras el limpiador aun no ejecuto
+        // la consulta de seleccion y bloqueo.
         await using (var db = await factory.CreateDbContextAsync())
         {
             await db.Salas
@@ -637,5 +638,85 @@ public class RetentionServiceTests
         Assert.True(await check.Salas.AnyAsync(s => s.Id == salaTwo));
         Assert.True(await check.SesionesInvitado.AnyAsync(s => s.Id == sesionOne && s.SalaId == salaOne));
         Assert.True(await check.Solicitudes.AnyAsync(s => s.Id == solicitudOne));
+    }
+
+    [Fact]
+    public async Task Purge_LockedFirstRooms_SkipsThemAndPurgesAvailableOnes()
+    {
+        await using var factory = await CreateFactoryAsync(batchSize: 2);
+
+        Guid lockedOne;
+        Guid lockedTwo;
+        Guid availableOne;
+        Guid availableTwo;
+
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var djId = await SeedDjAsync(db, "skip-locked@test.com");
+
+            // Orden estable por purge_at: A y B son las dos mas antiguas.
+            lockedOne = await SeedSalaAsync(
+                db, djId, NewCode(),
+                startsAt: Now.AddDays(-2), endsAt: Now.AddDays(-1), purgeAt: Now.AddHours(-4));
+            lockedTwo = await SeedSalaAsync(
+                db, djId, NewCode(),
+                startsAt: Now.AddDays(-2), endsAt: Now.AddDays(-1), purgeAt: Now.AddHours(-3));
+            availableOne = await SeedSalaAsync(
+                db, djId, NewCode(),
+                startsAt: Now.AddDays(-2), endsAt: Now.AddDays(-1), purgeAt: Now.AddHours(-2));
+            availableTwo = await SeedSalaAsync(
+                db, djId, NewCode(),
+                startsAt: Now.AddDays(-2), endsAt: Now.AddDays(-1), purgeAt: Now.AddHours(-1));
+        }
+
+        string connectionString;
+        await using (var probe = await factory.CreateDbContextAsync())
+        {
+            connectionString = probe.Database.GetConnectionString()!;
+        }
+
+        // Transaccion independiente que bloquea las dos salas vencidas mas antiguas.
+        await using (var lockConn = new NpgsqlConnection(connectionString))
+        {
+            await lockConn.OpenAsync();
+            await using var lockTx = await lockConn.BeginTransactionAsync();
+
+            await using (var cmd = lockConn.CreateCommand())
+            {
+                cmd.Transaction = lockTx;
+                cmd.CommandText = """
+                    SELECT id FROM salas
+                    WHERE id = ANY(@ids)
+                    ORDER BY purge_at, id
+                    FOR UPDATE
+                    """;
+                cmd.Parameters.Add(new NpgsqlParameter("ids", new[] { lockedOne, lockedTwo }));
+                await using var reader = await cmd.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+            }
+
+            // La limpieza no espera por los bloqueos: SKIP LOCKED salta A y B y
+            // llena el lote con C y D, que si estan disponibles.
+            var deleted = await RunPurgeAsync(factory).WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(2, deleted);
+
+            await using var check = await factory.CreateDbContextAsync();
+            Assert.False(await check.Salas.AnyAsync(s => s.Id == availableOne));
+            Assert.False(await check.Salas.AnyAsync(s => s.Id == availableTwo));
+            Assert.True(await check.Salas.AnyAsync(s => s.Id == lockedOne));
+            Assert.True(await check.Salas.AnyAsync(s => s.Id == lockedTwo));
+
+            await lockTx.RollbackAsync();
+        }
+
+        // Tras liberar el bloqueo, una pasada posterior limpia las restantes.
+        var remaining = await RunPurgeAsync(factory);
+
+        Assert.Equal(2, remaining);
+
+        await using var finalCheck = await factory.CreateDbContextAsync();
+        Assert.False(await finalCheck.Salas.AnyAsync(s => s.Id == lockedOne));
+        Assert.False(await finalCheck.Salas.AnyAsync(s => s.Id == lockedTwo));
     }
 }
