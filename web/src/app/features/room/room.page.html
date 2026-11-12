@@ -9,8 +9,6 @@
         <a class="topbar__dj-link" [routerLink]="['/room', currentRoom.id, 'dj']">
           Conoce al DJ
         </a>
-      } @else {
-        <span class="topbar__spacer" aria-hidden="true"></span>
       }
     }
   </header>
@@ -53,7 +51,7 @@
       @if (unavailableReason(); as reason) {
         <p class="notice-text" role="status">{{ reason }}</p>
       } @else {
-        <fieldset class="mode-switch">
+        <fieldset class="mode-switch" [disabled]="sending()">
           <legend class="sr-only">¿Qué quieres enviar?</legend>
           <label class="mode-switch__option">
             <input
@@ -177,7 +175,7 @@
 
           <p class="request__note">Solo el nombre de la canción es obligatorio.</p>
 
-          <button class="button button--primary button--full" type="submit" [disabled]="submitting()">
+          <button class="button button--primary button--full" type="submit" [disabled]="sending()">
             {{ submitting() ? 'Enviando…' : 'Enviar solicitud' }}
           </button>
         </form>
@@ -240,7 +238,7 @@
           <p class="request__note">El nombre es opcional; el enlace es obligatorio.</p>
           <p class="request__note request__note--privacy">Solo el DJ podrá ver esta playlist.</p>
 
-          <button class="button button--primary button--full" type="submit" [disabled]="playlistSubmitting()">
+          <button class="button button--primary button--full" type="submit" [disabled]="sending()">
             {{ playlistSubmitting() ? 'Enviando…' : 'Enviar playlist' }}
           </button>
         </form>

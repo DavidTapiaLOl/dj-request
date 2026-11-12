@@ -69,6 +69,8 @@ export class RoomPage implements OnInit {
   readonly submitting = signal(false);
   readonly playlistSubmitting = signal(false);
 
+  readonly sending = computed(() => this.submitting() || this.playlistSubmitting());
+
   readonly sessionExpired = signal(false);
   readonly roomError = signal<string | null>(null);
   readonly listError = signal<string | null>(null);
@@ -148,12 +150,14 @@ export class RoomPage implements OnInit {
   }
 
   async onSubmit(): Promise<void> {
+    if (this.sending()) return;
+
     this.submitted.set(true);
     this.submitError.set(null);
     this.submitSuccess.set(null);
 
-    if (this.submitting() || !this.session) {
-      if (!this.session) this.sessionExpired.set(true);
+    if (!this.session) {
+      this.sessionExpired.set(true);
       return;
     }
 
@@ -188,16 +192,19 @@ export class RoomPage implements OnInit {
   }
 
   setMode(mode: 'song' | 'playlist'): void {
+    if (this.sending()) return;
     this.mode.set(mode);
   }
 
   async onSubmitPlaylist(): Promise<void> {
+    if (this.sending()) return;
+
     this.playlistSubmitted.set(true);
     this.playlistError.set(null);
     this.playlistSuccess.set(null);
 
-    if (this.playlistSubmitting() || !this.session) {
-      if (!this.session) this.sessionExpired.set(true);
+    if (!this.session) {
+      this.sessionExpired.set(true);
       return;
     }
 

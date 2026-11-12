@@ -1,7 +1,7 @@
 import { HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, provideRouter } from '@angular/router';
-import { of, throwError } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { GuestRoomService } from '../../core/guest-room.service';
 import { GuestSessionService } from '../../core/guest-session.service';
 import { GenreService } from '../../core/genre.service';
@@ -480,5 +480,110 @@ describe('RoomPage', () => {
 
     expect(component.playlistError()).toBeNull();
     expect(component.playlistSuccess()).toContain('envió correctamente');
+  });
+
+  // --- Coordinación de envíos ---
+
+  it('blocks switching modes and playlist submission while a song is sending', async () => {
+    const pending = new Subject<Solicitud>();
+    rooms.createRequest.mockReturnValueOnce(pending.asObservable());
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.setValue({
+      nombre: 'Borrador',
+      enlace: 'https://ejemplo.com/draft',
+    });
+    component.setMode('song');
+    component.form.controls.nombre.setValue('Canción');
+
+    const sending = component.onSubmit();
+
+    expect(component.sending()).toBe(true);
+    component.setMode('playlist');
+    expect(component.mode()).toBe('song');
+    await component.onSubmitPlaylist();
+    expect(rooms.createPlaylist).not.toHaveBeenCalled();
+
+    pending.next(makeSolicitud());
+    pending.complete();
+    await sending;
+
+    expect(component.sending()).toBe(false);
+    component.setMode('playlist');
+    expect(component.mode()).toBe('playlist');
+    expect(component.playlistForm.controls.nombre.value).toBe('Borrador');
+    expect(component.playlistForm.controls.enlace.value).toBe('https://ejemplo.com/draft');
+  });
+
+  it('blocks switching modes and song submission while a playlist is sending', async () => {
+    const pending = new Subject<Playlist>();
+    rooms.createPlaylist.mockReturnValueOnce(pending.asObservable());
+    const component = createComponent();
+    await component.init();
+
+    component.setMode('playlist');
+    component.playlistForm.controls.enlace.setValue('https://ejemplo.com/lista');
+
+    const sending = component.onSubmitPlaylist();
+
+    expect(component.sending()).toBe(true);
+    component.setMode('song');
+    expect(component.mode()).toBe('playlist');
+    await component.onSubmit();
+    expect(component.submitted()).toBe(false);
+    expect(rooms.createRequest).not.toHaveBeenCalled();
+
+    pending.next(makePlaylist());
+    pending.complete();
+    await sending;
+
+    expect(component.sending()).toBe(false);
+    component.setMode('song');
+    expect(component.mode()).toBe('song');
+    expect(component.form.controls.nombre.value).toBe('');
+  });
+
+  it('restores the interaction after an uncertain failure', async () => {
+    const pending = new Subject<Solicitud>();
+    rooms.createRequest.mockReturnValueOnce(pending.asObservable());
+    const component = createComponent();
+    await component.init();
+    component.form.controls.nombre.setValue('Canción');
+
+    const sending = component.onSubmit();
+    expect(component.sending()).toBe(true);
+
+    pending.error(new HttpErrorResponse({ status: 0 }));
+    await sending;
+
+    expect(component.sending()).toBe(false);
+    expect(component.submitError()).toContain('reintentar');
+    component.setMode('playlist');
+    expect(component.mode()).toBe('playlist');
+    expect(component.form.controls.nombre.value).toBe('Canción');
+  });
+
+  it('keeps the idempotency key when retrying after a pending uncertain failure', async () => {
+    const pending = new Subject<Solicitud>();
+    rooms.createRequest
+      .mockReturnValueOnce(pending.asObservable())
+      .mockReturnValueOnce(of(makeSolicitud()));
+    const component = createComponent();
+    await component.init();
+    component.form.controls.nombre.setValue('Canción');
+
+    const sending = component.onSubmit();
+    pending.error(new HttpErrorResponse({ status: 0 }));
+    await sending;
+
+    await component.onSubmit();
+
+    expect(rooms.createRequest).toHaveBeenCalledTimes(2);
+    const first = rooms.createRequest.mock.calls[0][2] as CreateSolicitudPayload;
+    const second = rooms.createRequest.mock.calls[1][2] as CreateSolicitudPayload;
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    expect(second.nombre).toBe(first.nombre);
   });
 });
