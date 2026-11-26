@@ -127,6 +127,9 @@ public class WebAppFactory : WebApplicationFactory<Program>
                 services.AddSingleton<IGuestTokenGenerator>(customGuestGenerator);
             }
 
+            services.AddDbContext<AdminDbContext>(options =>
+                AdminDbContext.UseAdminStore(options, testConnectionString));
+
             services.AddDbContext<DjRequestsDbContext>(options =>
             {
                 options.UseNpgsql(testConnectionString);
@@ -158,6 +161,9 @@ public class WebAppFactory : WebApplicationFactory<Program>
         var context = scope.ServiceProvider.GetRequiredService<DjRequestsDbContext>();
         context.Database.Migrate();
 
+        var adminContext = scope.ServiceProvider.GetRequiredService<AdminDbContext>();
+        adminContext.Database.Migrate();
+
         return host;
     }
 
@@ -165,6 +171,14 @@ public class WebAppFactory : WebApplicationFactory<Program>
     {
         var scope = Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<DjRequestsDbContext>();
+        await context.Database.MigrateAsync();
+        return context;
+    }
+
+    public async Task<AdminDbContext> CreateAdminDbContextAsync()
+    {
+        var scope = Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AdminDbContext>();
         await context.Database.MigrateAsync();
         return context;
     }

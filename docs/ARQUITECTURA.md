@@ -22,7 +22,7 @@ No añadir cargadores de dotenv por conveniencia sin necesidad. No persistir una
 
 ## Autenticación
 Fase 1: ASP.NET Core Identity con Guid y usuario DjAccount mapeado a djs; no se comparte tabla con invitados. Conservar tablas auxiliares de Identity. El esquema permite tokens soportados por framework en tarea de autenticación posterior; no diseñar un JWT ad hoc ahora.
-Fase 3: administradores separados, sin endpoints públicos de registro, autenticación robusta y control de privilegios. Modelo y auditoría están documentados; no crear credenciales de administrador de ejemplo.
+Fase 3: administradores separados, sin endpoints públicos de registro y con control de privilegios. Base implementada: `AdminDbContext` y esquema bearer `AdminBearer` propio, política `ActiveAdmin` (cuenta activa y security stamp), alta interactiva explícita y migración `AddAdminIdentity` generada. No crear credenciales de administrador de ejemplo. Pendiente para considerar robustez completa: segundo factor, auditoría, panel de escritura, revocación centralizada de refresh y persistencia de claves.
 Invitado: token opaco aleatorio, limitado a sala, expirable y revocable; guardar solo hash. No usar un UUID enviado por el cliente como autenticación.
 
 ### Sesiones de invitado (implementado)

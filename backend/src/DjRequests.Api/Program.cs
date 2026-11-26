@@ -2,6 +2,10 @@ using System.Globalization;
 using System.Threading.RateLimiting;
 using DjRequests.Api.Entities;
 using DjRequests.Api.Modules.Accounts.Endpoints;
+using DjRequests.Api.Modules.Administration;
+using DjRequests.Api.Modules.Administration.Authentication;
+using DjRequests.Api.Modules.Administration.Endpoints;
+using DjRequests.Api.Modules.Administration.Options;
 using DjRequests.Api.Modules.Accounts.Options;
 using DjRequests.Api.Modules.Accounts.Policies;
 using DjRequests.Api.Modules.Genres.Endpoints;
@@ -80,6 +84,8 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddOptions<BearerTokenOptions>(IdentityConstants.BearerScheme)
     .Configure<TimeProvider>((options, timeProvider) => options.TimeProvider = timeProvider);
 
+builder.Services.AddAdministration(builder.Configuration);
+
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("ActiveDj", policy =>
@@ -121,10 +127,14 @@ builder.Services.AddRateLimiter(options =>
     var authOptions = builder.Configuration.GetSection("AuthRateLimits").Get<AuthRateLimitOptions>()
         ?? new AuthRateLimitOptions();
 
+    var adminAuthOptions = builder.Configuration.GetSection("AdminAuthRateLimits").Get<AdminAuthRateLimitOptions>()
+        ?? new AdminAuthRateLimitOptions();
+
     var guestOptions = builder.Configuration.GetSection("GuestRateLimits").Get<GuestRateLimitOptions>()
         ?? new GuestRateLimitOptions();
 
     var window = TimeSpan.FromMinutes(authOptions.WindowMinutes);
+    var adminWindow = TimeSpan.FromMinutes(adminAuthOptions.WindowMinutes);
     var guestWindow = TimeSpan.FromMinutes(guestOptions.WindowMinutes);
 
     static Func<HttpContext, RateLimitPartition<string>> PartitionByClientIp(int permitLimit, TimeSpan window)
@@ -169,6 +179,12 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("register", PartitionByClientIp(authOptions.RegisterPermitLimit, window));
     options.AddPolicy("login", PartitionByClientIp(authOptions.LoginPermitLimit, window));
     options.AddPolicy("refresh", PartitionByClientIp(authOptions.RefreshPermitLimit, window));
+    options.AddPolicy(
+        AdminAuthenticationDefaults.LoginRateLimitPolicy,
+        PartitionByClientIp(adminAuthOptions.LoginPermitLimit, adminWindow));
+    options.AddPolicy(
+        AdminAuthenticationDefaults.RefreshRateLimitPolicy,
+        PartitionByClientIp(adminAuthOptions.RefreshPermitLimit, adminWindow));
     options.AddPolicy("guest-create", PartitionGuestPost);
     options.AddPolicy("guest-get", PartitionGuestGet);
 
@@ -304,11 +320,19 @@ app.UseAuthorization();
 app.MapHealthEndpoints();
 app.MapGeneroEndpoints();
 app.MapAuthEndpoints();
+app.MapAdminAuthEndpoints();
 app.MapRoomEndpoints();
 app.MapGuestEndpoints();
 app.MapSolicitudEndpoints();
 app.MapPlaylistEndpoints();
 app.MapProfileEndpoints();
 
+if (AdminProvisioningCommand.IsRequested(args))
+{
+    return await AdminProvisioningCommand.RunAsync(app.Services);
+}
+
 app.Run();
+return 0;
+
 public partial class Program { }

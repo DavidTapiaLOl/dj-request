@@ -1,4 +1,53 @@
-﻿# DJ Requests — Estado de la tarea 12 (playlists compartidas de extremo a extremo)
+﻿# DJ Requests — Estado de la tarea 13A (base de autenticación administrativa)
+
+## Resumen
+Base de autenticación para administradores separada de DJs e invitados: `AdminAccount` y `AdminDbContext` con Identity, tablas `admin_*`, esquema bearer `AdminBearer` y política `ActiveAdmin`, endpoints `POST /api/admin/auth/login`, `POST /api/admin/auth/refresh` y `GET /api/admin/auth/me`, y alta interactiva explícita mediante `--provision-admin`. Sin registro público, roles, seed, dashboard ni segundo factor. `AddAdminIdentity` fue **generada**, con SQL de revisión; **no aplicada** a `dj_requests` por este agente.
+
+## Archivos creados/modificados
+### Backend
+- `backend/src/DjRequests.Api/Entities/AdminAccount.cs` — **nuevo**: `IdentityUser<Guid>` con `Name`, `IsActive` y `CreatedAt`.
+- `backend/src/DjRequests.Api/Persistence/AdminDbContext.cs` — **nuevo**: `IdentityUserContext` con tablas `admin_accounts`, `admin_user_claims`, `admin_user_logins` y `admin_user_tokens`, historial `__EFMigrationsHistory_Admin` e índices propios (`IX_admin_accounts_normalized_email`, `IX_admin_accounts_normalized_username`) para no colisionar con `djs`.
+- `backend/src/DjRequests.Api/Modules/Administration/` — **nuevo**: registro de servicios, constantes bearer, opciones de rate limit, política/handler `ActiveAdmin`, DTOs, endpoints, `AdminProvisioningService` y comando `--provision-admin`.
+- `backend/src/DjRequests.Api/Program.cs` — registra administración, políticas `admin-login`/`admin-refresh`, mapea endpoints y permite el modo aprovisionamiento sin arrancar el servidor ni el worker.
+- `backend/src/DjRequests.Api/appsettings.json` — sección `AdminAuthRateLimits`.
+- `backend/src/DjRequests.Api/Persistence/AdminMigrations/` — **nuevo**: migración `20261119025942_AddAdminIdentity`, snapshot y designer.
+- `backend/artifacts/AddAdminIdentity.sql` — **nuevo**: SQL generado para revisión.
+- `backend/tests/DjRequests.IntegrationTests/Fixtures/WebAppFactory.cs` — migra también `AdminDbContext` y añade `CreateAdminDbContextAsync`.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Administration/AdminAuthEndpointsTests.cs` — **nuevo**: 8 pruebas de login/refresh/me, no-store, desactivación, security stamp, aislamiento DJ↔admin y rate limit.
+
+### Documentación
+- `docs/BASE_DE_DATOS.md` — corrige estado de `AddDjProfiles` según confirmación del usuario; documenta tablas admin, migración, historial y alta explícita.
+- `docs/ARQUITECTURA.md` — actualiza la fase 3 con la base implementada y sus pendientes.
+- `backend/README.md` — documenta alta, endpoints admin, política, token options y migración pendiente.
+- `docs/ESTADO.md` — esta sección.
+
+## Resultados reales (verificados con evidencia)
+Estado: rama `feat/admin-auth` creada desde `f978ac9`, cambios sin commitear.
+
+| Comprobación | Resultado real |
+|---|---|
+| `dotnet build backend\DjRequests.slnx --nologo` | Correcto. Avisos preexistentes: licencia de `SixLabors.ImageSharp 4.1.3` y `CS0618` en `DatabaseFixture.cs` |
+| `dotnet test ... --filter "FullyQualifiedName~AdminAuthEndpointsTests"` | **8/8 correctas**, PostgreSQL 17 con Testcontainers |
+| Pruebas admin + regresión DJ `Register_ValidRequest_Returns201AndPersistsDj` | **9/9 correctas**; confirmó que la política Identity admin usa las mismas reglas que DJ y no rompe registro |
+| Suite completa `dotnet test backend\DjRequests.slnx --nologo` | **351 correctas, 1 fallida, 0 omitidas, total 352** |
+| Fallo de la suite | `RoomEndpointsTests.Create_StartsAtWithZ_EndsWithOffset_EquivalentInstant_PersistsSameUtc`: esperaba 201, obtuvo 400 porque usa fechas fijas `2026-11-14` ya pasadas. **Preexistente**: reproducido en worktree temporal limpio en `f978ac9`; el worktree fue eliminado después |
+| `dotnet tool restore --tool-manifest .config\dotnet-tools.json` | Correcto, dotnet-ef 10.0.12 |
+| `dotnet ef migrations add AddAdminIdentity --context AdminDbContext ...` | Migración generada; regenerada tras renombrar el índice de usuario para evitar colisión con `UserNameIndex` de DJs |
+| `dotnet ef migrations script --context AdminDbContext ... --output artifacts\AddAdminIdentity.sql` | SQL generado (2982 bytes) |
+| Migraciones aplicadas a `dj_requests` | **Ninguna por este agente** |
+| `git status --short` y `git diff --stat` | 7 archivos modificados y 5 rutas nuevas; sin secretos ni `.env` |
+| `git diff --check` | Código de salida 0; solo avisos LF→CRLF propios del repositorio |
+
+## Límites y pendientes
+- El usuario debe revisar `backend/artifacts/AddAdminIdentity.sql` y decidir si aplica la migración; este agente no la aplicó.
+- Después de aplicarla, crear la cuenta con `dotnet run --project backend/src/DjRequests.Api -- --provision-admin`.
+- Refresh no tiene rotación de un solo uso ni revocación individual; cambiar el security stamp sí invalida tokens.
+- No hay segundo factor, auditoría, panel de administración ni persistencia de claves de Data Protection para producción.
+- Sin commit ni push. No se publicaron cuentas ni secretos.
+
+---
+
+# DJ Requests — Estado de la tarea 12 (playlists compartidas de extremo a extremo)
 
 ## Resumen
 Playlists compartidas completas y conectadas: el invitado envía el enlace de una playlist desde la web (nuevo modo "Compartir playlist" junto al formulario de canciones) y el DJ la consulta en una pestaña nueva "Playlists" de la app móvil. Backend nuevo en `Modules/Playlists` con los mismos invariantes que las solicitudes (transacción, bloqueo sala→sesión, idempotencia antes de cuota, intervalo compartido, `no-store`) y privacidad reforzada con pruebas. Sin migraciones (la tabla `playlists_compartidas` ya existía en `InitialCore`), sin dependencias nuevas y sin cambios en contratos existentes de canciones.

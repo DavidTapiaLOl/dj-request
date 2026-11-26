@@ -24,17 +24,19 @@ ASP.NET Core **no** carga `.env` automáticamente. ConnectionStrings se leen des
 
 ### 3. Revisar migración y SQL
 Las migraciones y su SQL de revisión ya fueron generados:
-- Migraciones: `backend/src/DjRequests.Api/Persistence/Migrations/`
-- SQL idempotente (revisión): `backend/artifacts/InitialCore.sql` y `backend/artifacts/SalaVersionConcurrencyToken.sql`
+- Migraciones DJ: `backend/src/DjRequests.Api/Persistence/Migrations/`
+- Migraciones admin: `backend/src/DjRequests.Api/Persistence/AdminMigrations/`
+- SQL de revisión: `backend/artifacts/InitialCore.sql`, `backend/artifacts/SalaVersionConcurrencyToken.sql`, `backend/artifacts/AddDjProfiles.sql` y `backend/artifacts/AddAdminIdentity.sql`
 
 **Estado de las migraciones:**
 - `20261006034357_InitialCore` **ya fue aplicada** a `dj_requests` localmente por el usuario (confirmación: `Done.`). No volver a aplicarla ni modificarla.
-- `20261016003450_SalaVersionConcurrencyToken` fue generada con la Tarea 03 ( Rooms ) y **aún no aplicada**. Es una migración **vacía** (Up/Down sin operaciones): `IsConcurrencyToken()` sobre `salas.version` (bigint) es una anotación de modelo de EF Core, no genera DDL. Solo añade el registro en `__EFMigrationsHistory` y actualiza el snapshot. El SQL de revisión correspondiente está en `backend/artifacts/SalaVersionConcurrencyToken.sql`.
+- `20261016003450_SalaVersionConcurrencyToken` y `20261108212801_AddDjProfiles` fueron generadas y, según confirmación del usuario, aplicadas localmente; este agente no las aplicó. `SalaVersionConcurrencyToken` es vacía (solo anota `version` como concurrency token y registra la migración).
+- `AddAdminIdentity` (contexto `AdminDbContext`, historial `__EFMigrationsHistory_Admin`) fue **generada pero no aplicada** a `dj_requests`. Revisar `backend/artifacts/AddAdminIdentity.sql` antes de aplicarla.
 
-Aplicar esta migración pendiente (cuando el usuario lo decida, tras revisar el SQL):
+Aplicar la migración admin (cuando el usuario lo decida, tras revisar el SQL):
 ```cmd
-cd C:\Users\juand\dj-requests\backend\src\DjRequests.Api
-dotnet ef database update --migration SalaVersionConcurrencyToken
+cd C:\Users\juand\dj-requests\backend
+dotnet ef database update --context AdminDbContext --project src\DjRequests.Api --startup-project src\DjRequests.Api
 ```
 
 ### 4. Aplicar migraciones futuras (si las hubiera)
@@ -229,9 +231,50 @@ En Docker: montar volumen en `/root/.aspnet/DataProtection-Keys` o configurar `P
 
 ### Pendientes (fuera de esta tarea)
 - Verificación de email (confirmación de registro)
-- Recuperación de contraseña
+- Recuperación de contrasena
 - Logout y gestión de sesiones por dispositivo
 - Revocación individual de refresh tokens
+
+## Admin Auth Endpoints
+
+Base de autenticación administrativa, separada de DJs e invitados. No hay registro público de administradores. Requiere la migración `AddAdminIdentity` aplicada.
+
+### Alta de administrador (procedimiento interno)
+```cmd
+cd C:\Users\juand\dj-requests
+dotnet run --project backend/src/DjRequests.Api -- --provision-admin
+```
+Solicita nombre, correo y contrasena dos veces; la contrasena no se muestra en pantalla ni se pasa como argumento. La contrasena sigue la política vigente de Identity: mínimo 12 caracteres, sin requisitos de complejidad. No crear cuentas mediante seed de migración.
+
+### POST /api/admin/auth/login
+Request: `{ "email": "admin@example.com", "password": "passphrase-de-12-chars-minimo" }`.
+
+Response 200: mismo formato que login DJ (`accessToken`, `refreshToken`, `tokenType`, `expiresIn`). Access 15 min; refresh 8 h. Todas las respuestas llevan `Cache-Control: no-store`. Errores: 400 validación, 401 credenciales/cuenta inactiva/bloqueo, 429 rate limit.
+
+### POST /api/admin/auth/refresh
+Request: `{ "refreshToken": "..." }`. Response 200 igual que login. Valida expiración del refresh y security stamp; Cambiar la contrasena u otras operaciones que renueven el stamp invalidan tokens emitidos. No hay rotación de un solo uso ni revocación individual. Errores: 400, 401, 429.
+
+### GET /api/admin/auth/me
+Requiere `Authorization: Bearer <accessToken>` del esquema `AdminBearer` y la política `ActiveAdmin`, que comprueba cuenta existente, `activo = true` y security stamp. Response 200:
+```json
+{
+  "id": "guid",
+  "name": "Admin Example",
+  "email": "admin@example.com"
+}
+```
+Errores: 401 token ausente/inválido/expirado, 403 cuenta inactiva o stamp cambiado. Los tokens DJ no sirven aquí y los tokens admin no sirven en `/api/auth/*`.
+
+### Configuración admin
+Los tokens usan propósitos de Data Protection distintos de los tokens DJ. No se comparten claves de cifrado de access/refresh entre ambos esquemas. Rate limits configurables:
+```json
+"AdminAuthRateLimits": {
+  "LoginPermitLimit": 10,
+  "RefreshPermitLimit": 20,
+  "WindowMinutes": 1
+}
+```
+Partición por IP del cliente, igual que las políticas DJ. Pendiente: segundo factor, auditoria, panel de escritura, revocación centralizada y persistencia de claves en producción.
 
 ## Rooms Endpoints
 
