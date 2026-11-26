@@ -323,6 +323,7 @@ app.MapHealthEndpoints();
 app.MapGeneroEndpoints();
 app.MapAuthEndpoints();
 app.MapAdminAuthEndpoints();
+app.MapAdminDjEndpoints();
 app.MapRoomEndpoints();
 app.MapGuestEndpoints();
 app.MapSolicitudEndpoints();

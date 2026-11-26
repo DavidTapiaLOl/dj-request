@@ -1,4 +1,71 @@
-﻿# DJ Requests — Verificación y correcciones posteriores de autenticación administrativa (2026-11-25)
+﻿# DJ Requests — Estado de verificaciones posteriores (2026-11-25)
+
+# DJ Requests — Tarea 13B: consulta administrativa de DJs
+
+## Alcance ejecutado
+Backend únicamente. Rama `feat/admin-djs` creada desde `feat/admin-auth` (`c894834`); el estado previo al cierre era sin commit ni push. Sin migraciones, clientes, dependencias, datos de `dj_requests` ni contratos DJ/invitado. No se detuvo la API en ejecución.
+
+## Contexto confirmado por el usuario
+- `AddAdminIdentity` ya se aplicó localmente en `dj_requests`.
+- Se creó una cuenta de administrador con `dotnet run --project backend/src/DjRequests.Api -- --provision-admin`.
+- Se verificaron manualmente `POST /api/admin/auth/login` y `GET /api/admin/auth/me`.
+- Estos tres puntos son evidencia del usuario; este agente no ejecutó la migración, el aprovisionamiento ni esas verificaciones manuales.
+
+## Contrato implementado
+- `GET /api/admin/djs?page=1&pageSize=20&search=&estado=` — listado paginado, protegido por `AdminBearer`/`ActiveAdmin`, sin caché.
+- `GET /api/admin/djs/{id:guid}` — detalle de un DJ, protegido por la misma política, sin caché.
+- Filtros: `search` opcional (trim, máx. 100 caracteres, `ILIKE` insensible a mayúsculas sobre email y nombre artístico); `estado` opcional (`activo` o `suspendido`, normalizado a minúsculas).
+- Paginación: `page >= 1`, `pageSize` 1-100, orden `CreatedAt DESC, Id`, respuesta con `items`, `page`, `pageSize`, `totalCount` y `hasMore`.
+- Detalle: campos públicos del DJ y perfil (`description`, `startYear`, `photoUrl`, `socialLinks`); si no hay perfil, esos campos son nulos. `photoUrl` se genera con `IFileStorage.GetPublicUrl`.
+- Errores 400/401/403/404 con `Cache-Control: no-store`; las respuestas nunca incluyen `PasswordHash`, `SecurityStamp`, correos normalizados, `lockout`, roles ni datos de sesión.
+- Sin endpoints de edición, suspensión, reactivación ni eliminación de DJs.
+
+Ejemplos:
+
+```http
+GET /api/admin/djs?page=1&pageSize=20
+Authorization: Bearer <access-token-de-administrador>
+
+GET /api/admin/djs/2f8c1c5e-4a2e-4c1f-9c0b-6d7a1e2f3b44
+Authorization: Bearer <access-token-de-administrador>
+```
+
+## Cambios aplicados
+- `backend/src/DjRequests.Api/Modules/Administration/Dtos/AdminDjListItemDto.cs` — **nuevo**: `Id`, `Email`, `ArtistName`, `Estado`, `CreatedAt`.
+- `backend/src/DjRequests.Api/Modules/Administration/Dtos/AdminDjDto.cs` — **nuevo**: detalle con campos públicos y `SocialLinksDto`.
+- `backend/src/DjRequests.Api/Modules/Administration/Dtos/AdminDjPageResponse.cs` — **nuevo**: `Items`, `Page`, `PageSize`, `TotalCount`, `HasMore`.
+- `backend/src/DjRequests.Api/Modules/Administration/Services/AdminDjService.cs` — **nuevo**: consulta `AsNoTracking`, filtros, orden estable, conteo y construcción de DTOs.
+- `backend/src/DjRequests.Api/Modules/Administration/Endpoints/AdminDjEndpoints.cs` — **nuevo**: endpoints GET, validación de consulta y 404 tipado.
+- `backend/src/DjRequests.Api/Modules/Administration/AdministrationServiceCollectionExtensions.cs` — registra `AdminDjService`.
+- `backend/src/DjRequests.Api/Program.cs` — mapea `app.MapAdminDjEndpoints()`.
+- `backend/src/DjRequests.Api/Modules/Administration/AdminAuthNoStoreMiddleware.cs` — amplía `no-store` a `/api/admin/djs`, manteniendo `Response.OnStarting`.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Administration/AdminDjEndpointsTests.cs` — **nuevo**: 8 pruebas de integración con PostgreSQL/Testcontainers.
+- `docs/ESTADO.md` — esta sección.
+
+## Resultados reales (verificados con evidencia)
+
+| Comprobación | Resultado real |
+|---|---|
+| Build directo inicial | `dotnet build backend\DjRequests.slnx --nologo` falló con `MSB3027`/`MSB3021`: el proceso `DjRequests.Api (22712)` bloqueaba `bin\Debug\net10.0\DjRequests.Api.exe`. No se detuvo el servidor. |
+| Build en salida temporal | `dotnet build backend\DjRequests.slnx --nologo -p:BaseOutputPath=...\dj-requests-13b-build\` → correcto, 0 errores; avisos preexistentes de licencia `SixLabors.ImageSharp 4.1.3` y `CS0618` en `DatabaseFixture.cs`. |
+| Primera ejecución de `AdminDjEndpointsTests` | 7/8; único fallo `Get_Detail_ReturnsProfileDataWithoutIdentityFields`: `JsonSerializer.Deserialize` sin `JsonSerializerDefaults.Web` devolvió `Guid.Empty`. Corregido en la prueba. |
+| Pruebas `AdminDjEndpointsTests` | 8/8 correctas, 0 fallidas, 0 omitidas, 5 s. |
+| Pruebas administrativas combinadas | `dotnet test ... --filter "FullyQualifiedName~AdminAuthEndpointsTests\|FullyQualifiedName~AdminDjEndpointsTests"` → 30/30 correctas, 15 s. |
+| Suite completa | `dotnet test backend\DjRequests.slnx --nologo -p:BaseOutputPath=...\dj-requests-13b-full\` → **385/385 correctas**, 0 fallidas, 0 omitidas, 2 m 14 s. |
+| Base de datos | Sin migraciones generadas ni aplicadas por este agente; `dj_requests` intacta; pruebas en bases efímeras `dj_requests_test_<guid>` con `Retention:Enabled=false`. |
+| Git | Antes del cierre: rama `feat/admin-djs`, sin commit ni push; `git status --short`: 4 archivos modificados y 6 rutas nuevas; `git diff --check`: código 0, solo avisos LF→CRLF en 3 archivos rastreados; `git diff --stat` (solo rastreados): 4 archivos, 73 inserciones, 2 borrados. El cierre incluye commit y push de la lista explícita de archivos de esta tarea. |
+| Seguridad | Sin secretos, tokens, cadenas de conexión ni `.env` en diffs, logs o documentación. |
+| Verificación manual de los nuevos endpoints | No ejecutada todavía; la evidencia manual del usuario cubre únicamente `POST /api/admin/auth/login` y `GET /api/admin/auth/me`. |
+
+## Límites y pendientes
+- El cierre publica la lista explícita de archivos de esta tarea en `feat/admin-djs`; SHA y estado final se reportan fuera de este documento.
+- No se agregó auditoría, rate limiting nuevo, seed de administradores ni acciones de escritura sobre DJs.
+- La API en ejecución no se detuvo; los builds se hicieron en carpetas temporales.
+- Las secciones históricas siguientes describen estados anteriores, no el estado final de esta tarea.
+
+---
+
+# DJ Requests — Verificación y correcciones posteriores de autenticación administrativa (2026-11-25)
 
 ## Alcance ejecutado
 Verificación y endurecimiento de la base de autenticación administrativa antes de iniciar gestión administrativa de DJs, con autorización explícita del plan. Rama `feat/admin-auth`, HEAD `cd2098b`, sin commit ni push. No se tocaron migraciones, `dj_requests`, clientes, contratos DJ/invitado, dependencias ni LAN. Los cambios del usuario previos a esta tarea se conservaron.

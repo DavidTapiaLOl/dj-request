@@ -9,7 +9,9 @@ public static class AdminAuthNoStoreMiddleware
     {
         return app.Use(async (context, next) =>
         {
-            if (context.Request.Path.StartsWithSegments("/api/admin/auth"))
+            var path = context.Request.Path;
+            if (path.StartsWithSegments("/api/admin/auth")
+                || path.StartsWithSegments("/api/admin/djs"))
             {
                 context.Response.Headers.CacheControl = NoStoreResults.CacheControlValue;
                 context.Response.OnStarting(() =>

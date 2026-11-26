@@ -3,6 +3,7 @@ using DjRequests.Api.Modules.Administration.Authentication;
 using DjRequests.Api.Modules.Administration.Options;
 using DjRequests.Api.Modules.Administration.Policies;
 using DjRequests.Api.Modules.Administration.Provisioning;
+using DjRequests.Api.Modules.Administration.Services;
 using DjRequests.Api.Persistence;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.BearerToken;
@@ -71,6 +72,7 @@ public static class AdministrationServiceCollectionExtensions
 
         services.AddScoped<IAuthorizationHandler, ActiveAdminHandler>();
         services.AddScoped<AdminProvisioningService>();
+        services.AddScoped<AdminDjService>();
         services.Configure<AdminAuthRateLimitOptions>(
             configuration.GetSection("AdminAuthRateLimits"));
 
