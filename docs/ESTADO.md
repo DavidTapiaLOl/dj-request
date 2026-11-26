@@ -1,5 +1,63 @@
 ﻿# DJ Requests — Estado de verificaciones posteriores (2026-11-25)
 
+# DJ Requests — Tarea 13C: suspensión y reactivación administrativa de DJs
+
+## Alcance ejecutado
+Rama `feat/admin-dj-status` creada desde `feat/admin-djs` (`a633a73`). Solo backend, migración admin, SQL de revisión y documentación. Sin commit ni push. No se modificaron clientes, dependencias, contratos DJ/invitado, datos reales de `dj_requests` ni la API en ejecución. `Retention:Enabled` permanece `false`.
+
+## Contrato implementado
+- `PATCH /api/admin/djs/{id:guid}/state`, protegido por `AdminBearer` y `ActiveAdmin`; `Cache-Control: no-store` en todas las respuestas, incluidos 400/401/403/404/409 y errores previos al handler.
+- Request: `{ "estado": "suspendido", "expectedEstado": "activo" }`. Ambos campos son obligatorios; se normalizan con `Trim` y minúsculas; solo se aceptan `activo` y `suspendido`. Inválidos → 400. DJ inexistente → 404. Estado real distinto de `expectedEstado` → 409. Estado real igual a `expectedEstado` y a `estado` → 200 sin cambios ni auditoría duplicada.
+- Response 200: DTO explícito `{ "id": "guid", "estado": "suspendido" }`. Sin `PasswordHash`, `SecurityStamp`, correos normalizados, lockout ni datos de sesión.
+- `expectedEstado` detecta conflictos de estado, pero no sustituye una versión monotónica: no detecta todos los cambios intermedios que terminen en el mismo estado.
+- La suspensión cambia `djs.estado`, renueva el security stamp, revoca `sesiones_invitado.revoked_at` y registra auditoría. No borra cuentas, perfiles, fotos, salas, solicitudes ni playlists; no cambia el estado de salas ni `purge_at`/`ends_at`.
+- Tras suspender, el DJ no puede iniciar sesión, refrescar tokens ni usar rutas `ActiveDj` (403); los tokens emitidos antes dejan de ser válidos aunque se reactive la cuenta. Las sesiones de invitado revocadas siguen revocadas; crear sesión con DJ suspendido devuelve 404. Al reactivar hace falta un login nuevo y las nuevas sesiones siguen las reglas existentes de sala abierta, no finalizada y no purgada.
+- `ActiveDjHandler` valida ahora el security stamp mediante `SignInManager<DjAccount>.ValidateSecurityStampAsync` y el tipo de claim configurado en `IdentityOptions.ClaimsIdentity.SecurityStampClaimType`. No se interpreta JWT, no hay cookies ni cambios en los esquemas de autenticación.
+
+## Atomicidad y concurrencia
+- Una sola `NpgsqlConnection` perteneciente a `DjRequestsDbContext` y una transacción compartida; `AdminDbContext` se crea dentro de la operación sobre esa misma conexión. No hay transacciones distribuidas ni `SaveChanges` independientes fuera de la transacción.
+- Orden de bloqueo DJ → salas: `SELECT * FROM djs WHERE "Id" = {0} FOR UPDATE` y, solo para transiciones, `SELECT * FROM salas WHERE dj_id = {0} FOR UPDATE`. La revalidación de `expectedEstado` ocurre bajo bloqueo. Las sesiones se revocan con SQL parametrizado sobre `sala_id IN (SELECT id FROM salas WHERE dj_id = @djId)`, sin bloquear `sesiones_invitado` antes que `salas`.
+- La creación de sesión de invitado mantiene su bloqueo de sala y revalida DJ activo; la prueba de carrera verifica que no queda ninguna sesión no revocada. La limitación documentada es que una petición que ya estaba en ejecución antes de la suspensión puede completar lógica iniciada previamente, pero su sesión queda revocada por la transacción de suspensión.
+
+## Auditoría
+- `auditoria_admin` pertenece a `AdminDbContext`: `id`, `administrador_id` FK nullable a `admin_accounts` (`ON DELETE SET NULL`), `accion`, `tipo_recurso`, `recurso_id`, `resultado` y `created_at`. Índices por `created_at` y por (`administrador_id`, `created_at`); checks de texto no vacío.
+- Solo transiciones efectivas: `DJ_Suspendido` o `DJ_Reactivado`, `tipo_recurso = DJ`, `resultado = Exitoso`, `recurso_id = id` del DJ y `created_at = TimeProvider`. El administrador se toma del `NameIdentifier` autenticado, nunca del body. Sin payload libre, contraseñas, tokens, correos ni contenido musical. No hay endpoint de consulta ni limpieza automática; la retención de auditoría queda pendiente de decisión.
+
+## Migración
+- `AddAuditoriaAdmin` **generada** en `AdminDbContext` con historial `__EFMigrationsHistory_Admin`; SQL de revisión exportado a `backend/artifacts/AddAuditoriaAdmin.sql`. No se modificaron migraciones aplicadas ni se duplicaron tablas Identity. La migración **no fue aplicada** a `dj_requests` por este agente.
+- La primera generación con un DLL obsoleto produjo una migración vacía; se eliminó y regeneró desde una copia temporal del proyecto, sin detener la API del usuario.
+
+## Cambios aplicados
+- `backend/src/DjRequests.Api/Entities/AuditoriaAdmin.cs` — **nuevo**.
+- `backend/src/DjRequests.Api/Modules/Administration/Dtos/AdminDjStateRequest.cs` y `AdminDjStateResponse.cs` — **nuevos**.
+- `backend/src/DjRequests.Api/Modules/Administration/Services/AdminDjService.cs` — `SetStateAsync` con transacción compartida, bloqueo, renovación de stamp, revocación y auditoría.
+- `backend/src/DjRequests.Api/Modules/Administration/Endpoints/AdminDjEndpoints.cs` — `PATCH /state` con validación, DTO y `no-store`.
+- `backend/src/DjRequests.Api/Modules/Accounts/Policies/ActiveDjHandler.cs` — validación de security stamp.
+- `backend/src/DjRequests.Api/Persistence/AdminDbContext.cs` — `DbSet` y mapeo de `auditoria_admin`.
+- `backend/src/DjRequests.Api/Persistence/AdminMigrations/20261126035100_AddAuditoriaAdmin.cs` y `.Designer.cs`, y `AdminDbContextModelSnapshot.cs` — **generados/actualizados**.
+- `backend/artifacts/AddAuditoriaAdmin.sql` — **nuevo**.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Administration/AdminDjStateEndpointsTests.cs` — **nuevo**: 11 pruebas con PostgreSQL/Testcontainers.
+- `docs/ESTADO.md`, `docs/ARQUITECTURA.md`, `docs/BASE_DE_DATOS.md` y `backend/README.md` — documentación.
+
+## Resultados reales (verificados con evidencia)
+
+| Comprobación | Resultado real |
+|---|---|
+| Build con salida temporal | `dotnet build backend\DjRequests.slnx --nologo -p:BaseOutputPath=...\dj-requests-13c-tests-build\` → correcto, 0 errores; avisos preexistentes de licencia `SixLabors.ImageSharp 4.1.3` y `CS0618` en `DatabaseFixture.cs`. |
+| `AdminDjStateEndpointsTests` | 11/11 correctas, 0 fallidas, 0 omitidas, 8 s. |
+| Pruebas afectadas | `AdminAuthEndpointsTests\|AdminDjEndpointsTests\|AdminDjStateEndpointsTests\|AuthEndpointsTests\|RoomEndpointsTests\|GuestEndpointsTests` → 194/194 correctas, 1 m 22 s. |
+| Suite completa | `dotnet test backend\DjRequests.slnx --nologo --no-build -p:BaseOutputPath=...\dj-requests-13c-tests-build\` → **402/402 correctas**, 0 fallidas, 0 omitidas, 2 m 23 s. |
+| Git | Rama `feat/admin-dj-status`, sin commit ni push; cambios ajenos conservados. `git diff --check` sin errores; solo avisos de normalización LF→CRLF en archivos modificados. |
+| Base de datos | `AddAuditoriaAdmin` generada y SQL exportado; no aplicada a `dj_requests`. Pruebas en bases efímeras, `Retention:Enabled=false`. |
+| Seguridad | Sin secretos, tokens, cadenas de conexión ni `.env` en diffs, logs o documentación. |
+
+## Límites y pendientes
+- Sin verificación manual del usuario sobre el nuevo endpoint; la evidencia nueva es automatizada.
+- Falta decidir la retención de `auditoria_admin` y revisar/aplicar `AddAuditoriaAdmin` en `dj_requests` cuando el usuario lo autorice.
+- Las secciones históricas siguientes describen estados anteriores, no el estado final de esta tarea.
+
+---
+
 # DJ Requests — Corrección de búsqueda literal posterior al commit 79d603e
 
 ## Alcance ejecutado

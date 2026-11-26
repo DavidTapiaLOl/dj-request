@@ -113,6 +113,61 @@ namespace DjRequests.Api.Persistence.AdminMigrations
                         });
                 });
 
+            modelBuilder.Entity("DjRequests.Api.Entities.AuditoriaAdmin", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("accion");
+
+                    b.Property<Guid?>("AdministratorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("administrador_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recurso_id");
+
+                    b.Property<string>("ResourceType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("tipo_recurso");
+
+                    b.Property<string>("Result")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("resultado");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_auditoria_admin_created_at");
+
+                    b.HasIndex("AdministratorId", "CreatedAt")
+                        .HasDatabaseName("IX_auditoria_admin_administrador_id_created_at");
+
+                    b.ToTable("auditoria_admin", null, t =>
+                        {
+                            t.HasCheckConstraint("chk_auditoria_admin_accion_no_vacio", "btrim(\"accion\") <> ''");
+
+                            t.HasCheckConstraint("chk_auditoria_admin_resultado_no_vacio", "btrim(\"resultado\") <> ''");
+
+                            t.HasCheckConstraint("chk_auditoria_admin_tipo_recurso_no_vacio", "btrim(\"tipo_recurso\") <> ''");
+                        });
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<System.Guid>", b =>
                 {
                     b.Property<int>("Id")
@@ -175,6 +230,16 @@ namespace DjRequests.Api.Persistence.AdminMigrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("admin_user_tokens", (string)null);
+                });
+
+            modelBuilder.Entity("DjRequests.Api.Entities.AuditoriaAdmin", b =>
+                {
+                    b.HasOne("DjRequests.Api.Entities.AdminAccount", "Administrator")
+                        .WithMany()
+                        .HasForeignKey("AdministratorId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Administrator");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<System.Guid>", b =>

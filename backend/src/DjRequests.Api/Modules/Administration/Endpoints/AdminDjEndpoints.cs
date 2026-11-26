@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using DjRequests.Api.Modules.Administration.Authentication;
 using DjRequests.Api.Modules.Administration.Dtos;
 using DjRequests.Api.Modules.Administration.Services;
@@ -10,6 +11,7 @@ namespace DjRequests.Api.Modules.Administration.Endpoints;
 public static class AdminDjEndpoints
 {
     private const string NotFoundType = "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.5";
+    private const string ConflictType = "https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.10";
 
     public static void MapAdminDjEndpoints(this IEndpointRouteBuilder app)
     {
@@ -30,6 +32,16 @@ public static class AdminDjEndpoints
             .Produces<ProblemDetails>(StatusCodes.Status401Unauthorized)
             .Produces<ProblemDetails>(StatusCodes.Status403Forbidden)
             .Produces<ProblemDetails>(StatusCodes.Status404NotFound);
+
+        group.MapPatch("/{id:guid}/state", SetStateAsync)
+            .WithName("AdminSetDjState")
+            .RequireAuthorization(AdminAuthenticationDefaults.Policy)
+            .Produces<AdminDjStateResponse>(StatusCodes.Status200OK)
+            .Produces<ValidationProblemDetails>(StatusCodes.Status400BadRequest)
+            .Produces<ProblemDetails>(StatusCodes.Status401Unauthorized)
+            .Produces<ProblemDetails>(StatusCodes.Status403Forbidden)
+            .Produces<ProblemDetails>(StatusCodes.Status404NotFound)
+            .Produces<ProblemDetails>(StatusCodes.Status409Conflict);
     }
 
     private static async Task<IResult> ListAsync(
@@ -97,6 +109,77 @@ public static class AdminDjEndpoints
 
         return NoStoreResults.AddNoStore(Results.Ok(dj));
     }
+
+    private static async Task<IResult> SetStateAsync(
+        Guid id,
+        AdminDjStateRequest request,
+        AdminDjService service,
+        ClaimsPrincipal user,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        var errors = new Dictionary<string, string[]>();
+        var estado = request.Estado?.Trim().ToLowerInvariant();
+        var expectedEstado = request.ExpectedEstado?.Trim().ToLowerInvariant();
+
+        if (estado is null || !AdminDjService.IsValidEstado(estado))
+        {
+            errors["estado"] =
+            [
+                $"Estado inválido. Estados permitidos: {string.Join(", ", AdminDjService.ValidStates)}."
+            ];
+        }
+
+        if (expectedEstado is null || !AdminDjService.IsValidEstado(expectedEstado))
+        {
+            errors["expectedEstado"] =
+            [
+                $"Estado esperado inválido. Estados permitidos: {string.Join(", ", AdminDjService.ValidStates)}."
+            ];
+        }
+
+        if (errors.Count > 0)
+        {
+            return ValidationProblem(errors);
+        }
+
+        if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var administratorId))
+        {
+            return NoStoreResults.AddNoStore(Results.Unauthorized());
+        }
+
+        var result = await service.SetStateAsync(
+            id,
+            estado!,
+            expectedEstado!,
+            administratorId,
+            timeProvider,
+            cancellationToken);
+
+        switch (result.Status)
+        {
+            case AdminDjStateUpdateStatus.NotFound:
+                return NoStoreResults.AddNoStore(Results.Problem(
+                    detail: "DJ no encontrado.",
+                    statusCode: StatusCodes.Status404NotFound,
+                    title: "DJ no encontrado",
+                    type: NotFoundType));
+
+            case AdminDjStateUpdateStatus.Conflict:
+                return NoStoreResults.AddNoStore(Results.Problem(
+                    detail: "El estado actual del DJ no coincide con expectedEstado.",
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Conflicto de estado",
+                    type: ConflictType));
+
+            default:
+                return NoStoreResults.AddNoStore(
+                    Results.Ok(new AdminDjStateResponse(result.Id, result.Estado)));
+        }
+    }
+
+    private static IResult ValidationProblem(IDictionary<string, string[]> errors) =>
+        NoStoreResults.AddNoStore(Results.ValidationProblem(errors));
 
     private static IResult ValidationProblem(string field, string message) =>
         NoStoreResults.AddNoStore(Results.ValidationProblem(new Dictionary<string, string[]>

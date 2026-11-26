@@ -22,8 +22,15 @@ No añadir cargadores de dotenv por conveniencia sin necesidad. No persistir una
 
 ## Autenticación
 Fase 1: ASP.NET Core Identity con Guid y usuario DjAccount mapeado a djs; no se comparte tabla con invitados. Conservar tablas auxiliares de Identity. El esquema permite tokens soportados por framework en tarea de autenticación posterior; no diseñar un JWT ad hoc ahora.
-Fase 3: administradores separados, sin endpoints públicos de registro y con control de privilegios. Base implementada: `AdminDbContext` y esquema bearer `AdminBearer` propio, política `ActiveAdmin` (cuenta activa y security stamp), alta interactiva explícita y migración `AddAdminIdentity` generada. No crear credenciales de administrador de ejemplo. Pendiente para considerar robustez completa: segundo factor, auditoría, panel de escritura, revocación centralizada de refresh y persistencia de claves.
+Fase 3: administradores separados, sin endpoints públicos de registro y con control de privilegios. Base implementada: `AdminDbContext` y esquema bearer `AdminBearer` propio, política `ActiveAdmin` (cuenta activa y security stamp), alta interactiva explícita, migración `AddAdminIdentity` generada y auditoría administrativa de transiciones de DJ. No crear credenciales de administrador de ejemplo. Pendiente para considerar robustez completa: segundo factor, panel de escritura, revocación centralizada de refresh y persistencia de claves.
 Invitado: token opaco aleatorio, limitado a sala, expirable y revocable; guardar solo hash. No usar un UUID enviado por el cliente como autenticación.
+
+### Gestión administrativa de DJs (implementada)
+- Consulta: `GET /api/admin/djs` y `GET /api/admin/djs/{id}` con `AdminBearer`/`ActiveAdmin`, DTOs explícitos y `Cache-Control: no-store`.
+- Escritura: `PATCH /api/admin/djs/{id}/state` con `{ "estado", "expectedEstado" }`. Valida ambos campos, resuelve 400/404/409/200 y no registra auditoría en transiciones inexistentes o conflictivas. `expectedEstado` detecta cambios de estado concurrentes, no todos los cambios intermedios.
+- Seguridad: la suspensión renueva el security stamp y revoca sesiones de invitado; `ActiveDjHandler` valida estado y stamp en cada petición. Los tokens emitidos antes de la suspensión no se revalidan al reactivar. No se interpreta JWT ni se cambian esquemas de autenticación.
+- Atomicidad: `DjRequestsDbContext` y un `AdminDbContext` creado ad hoc comparten la misma `NpgsqlConnection` y transacción; bloqueo DJ → salas, revalidación bajo bloqueo y una sola confirmación para estado, stamp, revocaciones y auditoría. Sin transacciones distribuidas.
+- Auditoría: `auditoria_admin` registra únicamente transiciones efectivas con administrador autenticado, `TimeProvider` y campos acotados; sin payload libre ni datos sensibles. Sin consulta ni limpieza; retención pendiente.
 
 ### Sesiones de invitado (implementado)
 - Credencial: 32 bytes de `RandomNumberGenerator` en Base64URL sin padding (43 chars). Se entrega solo al crear la sesión; en BD se persiste únicamente el hash SHA-256 (`sesiones_invitado.token_hash`, hex 64). Nunca se usa un UUID del cliente como autenticación.

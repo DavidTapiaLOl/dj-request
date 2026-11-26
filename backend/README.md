@@ -26,14 +26,15 @@ ASP.NET Core **no** carga `.env` automáticamente. ConnectionStrings se leen des
 Las migraciones y su SQL de revisión ya fueron generados:
 - Migraciones DJ: `backend/src/DjRequests.Api/Persistence/Migrations/`
 - Migraciones admin: `backend/src/DjRequests.Api/Persistence/AdminMigrations/`
-- SQL de revisión: `backend/artifacts/InitialCore.sql`, `backend/artifacts/SalaVersionConcurrencyToken.sql`, `backend/artifacts/AddDjProfiles.sql` y `backend/artifacts/AddAdminIdentity.sql`
+- SQL de revisión: `backend/artifacts/InitialCore.sql`, `backend/artifacts/SalaVersionConcurrencyToken.sql`, `backend/artifacts/AddDjProfiles.sql`, `backend/artifacts/AddAdminIdentity.sql` y `backend/artifacts/AddAuditoriaAdmin.sql`
 
 **Estado de las migraciones:**
 - `20261006034357_InitialCore` **ya fue aplicada** a `dj_requests` localmente por el usuario (confirmación: `Done.`). No volver a aplicarla ni modificarla.
 - `20261016003450_SalaVersionConcurrencyToken` y `20261108212801_AddDjProfiles` fueron generadas y, según confirmación del usuario, aplicadas localmente; este agente no las aplicó. `SalaVersionConcurrencyToken` es vacía (solo anota `version` como concurrency token y registra la migración).
 - `AddAdminIdentity` (contexto `AdminDbContext`, historial `__EFMigrationsHistory_Admin`) fue **generada pero no aplicada** a `dj_requests`. Revisar `backend/artifacts/AddAdminIdentity.sql` antes de aplicarla.
+- `AddAuditoriaAdmin` (contexto `AdminDbContext`) fue **generada pero no aplicada** a `dj_requests`. Crea `auditoria_admin`; revisar `backend/artifacts/AddAuditoriaAdmin.sql` antes de aplicarla. No hay seed, DDL duplicado en Docker ni migraciones automáticas al arrancar.
 
-Aplicar la migración admin (cuando el usuario lo decida, tras revisar el SQL):
+Aplicar las migraciones admin (cuando el usuario lo decida, tras revisar el SQL):
 ```cmd
 cd C:\Users\juand\dj-requests\backend
 dotnet ef database update --context AdminDbContext --project src\DjRequests.Api --startup-project src\DjRequests.Api
@@ -274,7 +275,38 @@ Los tokens usan propósitos de Data Protection distintos de los tokens DJ. No se
   "WindowMinutes": 1
 }
 ```
-Partición por IP del cliente, igual que las políticas DJ. Pendiente: segundo factor, auditoria, panel de escritura, revocación centralizada y persistencia de claves en producción.
+Partición por IP del cliente, igual que las políticas DJ. Pendiente: segundo factor, panel de escritura, revocación centralizada y persistencia de claves en producción.
+
+## Admin DJ Endpoints
+
+Requieren `Authorization: Bearer <accessToken>` del esquema `AdminBearer` y la política `ActiveAdmin`. Todas las respuestas llevan `Cache-Control: no-store`; los DTO son explícitos y nunca devuelven entidades de Identity ni hashes/tokens. Requiere las migraciones `AddAdminIdentity` y `AddAuditoriaAdmin` aplicadas.
+
+### GET /api/admin/djs
+Query opcional: `page` (por defecto 1), `pageSize` (por defecto 20), `search` y `estado`. Respuesta paginada con DTOs de DJ administrativo. Búsqueda por correo/correo normalizado; `Trim` de espacios exteriores y literalidad de `%`, `_` y `\`. Errores: 400 validación, 401/403 autenticación o política, 429 rate limit.
+
+### GET /api/admin/djs/{id}
+Devuelve el DTO administrativo del DJ. 404 si no existe; 401/403 según autenticación/política.
+
+### PATCH /api/admin/djs/{id}/state
+Request:
+```json
+{
+  "estado": "suspendido",
+  "expectedEstado": "activo"
+}
+```
+Ambos campos son obligatorios; se normalizan con `Trim` y minúsculas; solo se aceptan `activo` y `suspendido`. Response 200:
+```json
+{
+  "id": "guid",
+  "estado": "suspendido"
+}
+```
+Reglas: DJ inexistente → 404; `expectedEstado` distinto del estado real → 409 sin cambios; estado real igual a `expectedEstado` y a `estado` → 200 sin cambios ni auditoría duplicada. `expectedEstado` detecta conflictos de estado, pero no todos los cambios intermedios.
+
+Suspender renueva el security stamp, revoca sesiones de invitado y registra `DJ_Suspendido`; reactivar registra `DJ_Reactivado`. Tras suspender, el DJ no puede iniciar sesión, refrescar tokens ni usar rutas `ActiveDj`; los tokens emitidos antes no se revalidan al reactivar. Las sesiones de invitado revocadas siguen revocadas y crear una sesión con DJ suspendido devuelve 404. No se borran cuentas, salas, solicitudes ni playlists, y no se cambia `purge_at`/`ends_at`.
+
+Operación atómica: una sola conexión Npgsql y transacción compartida entre `DjRequestsDbContext` y un `AdminDbContext` ad hoc; bloqueo DJ → salas y revalidación bajo bloqueo. Auditoría con administrador autenticado y `TimeProvider`, sin payload libre ni datos sensibles. No hay endpoint de consulta ni limpieza de auditoría; retención pendiente.
 
 ## Rooms Endpoints
 

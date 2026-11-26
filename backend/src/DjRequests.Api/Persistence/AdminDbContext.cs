@@ -14,6 +14,8 @@ public class AdminDbContext : IdentityUserContext<AdminAccount, Guid>
     {
     }
 
+    public DbSet<AuditoriaAdmin> AdminAudits { get; set; } = null!;
+
     public static DbContextOptionsBuilder UseAdminStore(
         DbContextOptionsBuilder optionsBuilder,
         string? connectionString)
@@ -28,9 +30,39 @@ public class AdminDbContext : IdentityUserContext<AdminAccount, Guid>
         base.OnModelCreating(builder);
 
         builder.Entity<AdminAccount>(ConfigureAdminAccount);
+        builder.Entity<AuditoriaAdmin>(ConfigureAuditoriaAdmin);
         builder.Entity<IdentityUserClaim<Guid>>().ToTable("admin_user_claims");
         builder.Entity<IdentityUserLogin<Guid>>().ToTable("admin_user_logins");
         builder.Entity<IdentityUserToken<Guid>>().ToTable("admin_user_tokens");
+    }
+
+    private static void ConfigureAuditoriaAdmin(EntityTypeBuilder<AuditoriaAdmin> builder)
+    {
+        builder.ToTable("auditoria_admin", table =>
+        {
+            table.HasCheckConstraint("chk_auditoria_admin_accion_no_vacio", "btrim(\"accion\") <> ''");
+            table.HasCheckConstraint("chk_auditoria_admin_tipo_recurso_no_vacio", "btrim(\"tipo_recurso\") <> ''");
+            table.HasCheckConstraint("chk_auditoria_admin_resultado_no_vacio", "btrim(\"resultado\") <> ''");
+        });
+
+        builder.HasKey(a => a.Id);
+        builder.Property(a => a.Id).HasColumnName("id");
+        builder.Property(a => a.AdministratorId).HasColumnName("administrador_id");
+        builder.Property(a => a.Action).HasColumnName("accion").HasMaxLength(80).IsRequired();
+        builder.Property(a => a.ResourceType).HasColumnName("tipo_recurso").HasMaxLength(40).IsRequired();
+        builder.Property(a => a.ResourceId).HasColumnName("recurso_id");
+        builder.Property(a => a.Result).HasColumnName("resultado").HasMaxLength(20).IsRequired();
+        builder.Property(a => a.CreatedAt).HasColumnName("created_at").IsRequired();
+
+        builder.HasOne(a => a.Administrator)
+            .WithMany()
+            .HasForeignKey(a => a.AdministratorId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasIndex(a => a.CreatedAt)
+            .HasDatabaseName("IX_auditoria_admin_created_at");
+        builder.HasIndex(a => new { a.AdministratorId, a.CreatedAt })
+            .HasDatabaseName("IX_auditoria_admin_administrador_id_created_at");
     }
 
     private static void ConfigureAdminAccount(EntityTypeBuilder<AdminAccount> builder)
