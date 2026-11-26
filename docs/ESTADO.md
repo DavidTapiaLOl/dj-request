@@ -1,5 +1,36 @@
 ﻿# DJ Requests — Estado de verificaciones posteriores (2026-11-25)
 
+# DJ Requests — Corrección de búsqueda literal posterior al commit 79d603e
+
+## Alcance ejecutado
+Corrección en `feat/admin-djs` sobre el commit `79d603e`. Solo backend: `AdminDjService.cs`, `AdminDjEndpointsTests.cs` y `docs/ESTADO.md`. Commit y push en `feat/admin-djs` con el mensaje acordado, sin force ni merge; sin cambios en móvil, web, contratos, dependencias ni migraciones; `dj_requests` intacta; servidores no detenidos.
+
+## Cambios aplicados
+- `backend/src/DjRequests.Api/Modules/Administration/Services/AdminDjService.cs` — `search` pasa a patrón literal: conserva `Trim` y máximo 100 definido en el endpoint, escapa `\`, `%` y `_`, y usa `EF.Functions.ILike(columna, patrón, "\\")`, con patrón parametrizado y `ESCAPE '\'` explícito generado por Npgsql.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Administration/AdminDjEndpointsTests.cs` — 6 pruebas nuevas: búsqueda por correo insensible a mayúsculas, `Trim` de espacios exteriores, literalidad de `%`, `_` y `\`, `page=int.MaxValue` con `pageSize=100`, orden por `Id` con `CreatedAt` idéntico y paginación sin duplicados, y sesión real de invitado con `X-Guest-Token` sin acceso administrativo.
+- `docs/ESTADO.md` — esta sección.
+
+## Resultados reales (verificados con evidencia)
+
+| Comprobación | Resultado real |
+|---|---|
+| Build con salida temporal | `dotnet build backend\DjRequests.slnx --nologo -p:BaseOutputPath=...\dj-requests-13b-literal-build\` → correcto, 0 errores; avisos preexistentes de licencia `SixLabors.ImageSharp 4.1.3` y `CS0618` en `DatabaseFixture.cs`. No se detuvo la API. |
+| Primera ejecución de `AdminDjEndpointsTests` | 13/14; único fallo `List_SearchWithLikeWildcards_IsLiteral`: `429 TooManyRequests` al registrar seis DJs seguidos. Corregido creando los DJs de esa prueba con `UserManager<DjAccount>` en la base aislada. |
+| Pruebas `AdminDjEndpointsTests` | 14/14 correctas, 0 fallidas, 0 omitidas, 9 s. |
+| Pruebas administrativas combinadas | `dotnet test ... --filter "FullyQualifiedName~AdminAuthEndpointsTests\|FullyQualifiedName~AdminDjEndpointsTests"` → 36/36 correctas, 18 s. |
+| Suite completa | `dotnet test backend\DjRequests.slnx --nologo -p:BaseOutputPath=...\dj-requests-13b-literal-build\` → **391/391 correctas**, 0 fallidas, 0 omitidas, 2 m 17 s. |
+| `git diff --check` | Código de salida 0; solo avisos LF→CRLF en `AdminDjService.cs`, `AdminDjEndpointsTests.cs` y `docs/ESTADO.md`. |
+| Base de datos y seguridad | Sin migraciones generadas ni aplicadas; sin secretos, tokens, cadenas de conexión ni `.env` en diffs, logs o documentación. |
+| Git | Corrección publicada en `feat/admin-djs` con el commit `fix(admin): buscar DJs literalmente y completar pruebas`; sin force ni merge. Se conservaron los cambios ajenos. |
+
+## Límites y pendientes
+- Sin prueba manual de los nuevos endpoints; la evidencia manual del usuario sigue cubriendo únicamente login/me administrativo.
+- Las secciones históricas siguientes describen estados anteriores, no el estado final de esta corrección.
+
+---
+
+# DJ Requests — Estado de verificaciones posteriores (2026-11-25)
+
 # DJ Requests — Tarea 13B: consulta administrativa de DJs
 
 ## Alcance ejecutado

@@ -7,6 +7,8 @@ using DjRequests.Api.Modules.Accounts.Dtos;
 using DjRequests.Api.Modules.Administration.Dtos;
 using DjRequests.Api.Modules.Administration.Provisioning;
 using DjRequests.Api.Modules.Administration.Services;
+using DjRequests.Api.Modules.Guests.Dtos;
+using DjRequests.Api.Modules.Rooms.Dtos;
 using DjRequests.Api.Persistence;
 using DjRequests.IntegrationTests.Fixtures;
 using Microsoft.AspNetCore.Identity;
@@ -100,6 +102,29 @@ public class AdminDjEndpointsTests : IAsyncLifetime
             .SingleAsync();
     }
 
+    private async Task<Guid> CreateDjDirectAsync(string email, string artistName)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<DjAccount>>();
+        var now = FakeTime.GetUtcNow();
+        var dj = new DjAccount
+        {
+            Id = Guid.NewGuid(),
+            UserName = email,
+            Email = email,
+            NormalizedEmail = email.ToUpperInvariant(),
+            NormalizedUserName = email.ToUpperInvariant(),
+            Estado = "activo",
+            NombreArtistico = artistName,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        var result = await userManager.CreateAsync(dj, DjPassword);
+        Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(e => e.Description)));
+        return dj.Id;
+    }
+
     private async Task<string> LoginDjAsync(string email)
     {
         using var response = await Client.PostAsJsonAsync(
@@ -172,8 +197,69 @@ public class AdminDjEndpointsTests : IAsyncLifetime
         return await Client.SendAsync(request);
     }
 
+    private async Task<string> CreateValidGuestTokenAsync(string djEmail)
+    {
+        using var djClient = _factory.CreateClient();
+        djClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        var register = await djClient.PostAsJsonAsync(
+            "/api/auth/register",
+            new RegisterRequest(djEmail, DjPassword, "DJ Sala"));
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        var login = await djClient.PostAsJsonAsync(
+            "/api/auth/login",
+            new LoginRequest(djEmail, DjPassword));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tokens = await login.Content.ReadFromJsonAsync<TokenResponse>();
+        Assert.NotNull(tokens);
+        djClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+        var now = FakeTime.GetUtcNow();
+        var room = await djClient.PostAsJsonAsync(
+            "/api/rooms",
+            new CreateRoomRequest(
+                "Sala Invitado",
+                now.AddHours(1).ToString("O"),
+                now.AddHours(4).ToString("O"),
+                null));
+        Assert.Equal(HttpStatusCode.Created, room.StatusCode);
+
+        var roomBody = await room.Content.ReadFromJsonAsync<RoomResponse>();
+        Assert.NotNull(roomBody);
+
+        var session = await djClient.PostAsJsonAsync(
+            "/api/guest-sessions",
+            new CreateGuestSessionRequest(roomBody.Codigo));
+        Assert.Equal(HttpStatusCode.Created, session.StatusCode);
+
+        var sessionBody = await session.Content.ReadFromJsonAsync<GuestSessionResponse>();
+        Assert.NotNull(sessionBody);
+        Assert.NotNull(sessionBody.GuestToken);
+        return sessionBody.GuestToken;
+    }
+
+    private async Task<HttpResponseMessage> GetWithGuestTokenAsync(string url, string guestToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("X-Guest-Token", guestToken);
+        return await Client.SendAsync(request);
+    }
+
     private static void AssertNoStore(HttpResponseMessage response) =>
         Assert.True(response.Headers.CacheControl?.NoStore, "Falta Cache-Control: no-store.");
+
+    private static async Task<(Guid[] Ids, bool HasMore)> ReadIdsAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+        var ids = root.GetProperty("items").EnumerateArray()
+            .Select(item => Guid.Parse(item.GetProperty("id").GetString()!))
+            .ToArray();
+        return (ids, root.GetProperty("hasMore").GetBoolean());
+    }
 
     [Fact]
     public async Task List_AdminToken_ReturnsPagedDjsOrderedByCreation()
@@ -396,6 +482,153 @@ public class AdminDjEndpointsTests : IAsyncLifetime
         {
             using var response = await GetAsync(url, token);
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            AssertNoStore(response);
+        }
+    }
+
+    [Fact]
+    public async Task List_SearchByEmail_IsCaseInsensitive()
+    {
+        await CreateAdminAsync();
+        var token = await LoginAdminAsync();
+
+        var expectedId = await RegisterDjAsync("Luna.Email@test.com", "Sin Nombre");
+        await RegisterDjAsync("otro@test.com", "Otro DJ");
+
+        using var response = await GetAsync(
+            "/api/admin/djs?search=luna.email@TEST.COM",
+            token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        AssertNoStore(response);
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(1, document.RootElement.GetProperty("totalCount").GetInt32());
+
+        var items = document.RootElement.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Single(items);
+        Assert.Equal(expectedId, Guid.Parse(items[0].GetProperty("id").GetString()!));
+    }
+
+    [Fact]
+    public async Task List_SearchWithOuterSpaces_IsTrimmed()
+    {
+        await CreateAdminAsync();
+        var token = await LoginAdminAsync();
+
+        var expectedId = await RegisterDjAsync("trim@test.com", "Luna Recortada");
+        await RegisterDjAsync("otro-trim@test.com", "Otro DJ");
+
+        using var response = await GetAsync(
+            "/api/admin/djs?search=%20%20LUNA%20%20",
+            token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        AssertNoStore(response);
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(1, document.RootElement.GetProperty("totalCount").GetInt32());
+
+        var items = document.RootElement.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Single(items);
+        Assert.Equal(expectedId, Guid.Parse(items[0].GetProperty("id").GetString()!));
+    }
+
+    [Fact]
+    public async Task List_SearchWithLikeWildcards_IsLiteral()
+    {
+        await CreateAdminAsync();
+        var token = await LoginAdminAsync();
+
+        var percentId = await CreateDjDirectAsync("percent@test.com", "Descuento 100%");
+        await CreateDjDirectAsync("percent-other@test.com", "Descuento 100 descuento");
+        var underscoreId = await CreateDjDirectAsync("underscore@test.com", "DJ a_b");
+        await CreateDjDirectAsync("underscore-other@test.com", "DJ aXb");
+        var escapeId = await CreateDjDirectAsync("escape@test.com", @"DJ a\b");
+        await CreateDjDirectAsync("escape-other@test.com", "DJ ab");
+
+        var searches = new (string Search, Guid ExpectedId)[]
+        {
+            ("100%", percentId),
+            ("a_b", underscoreId),
+            (@"a\b", escapeId)
+        };
+
+        foreach (var (search, expectedId) in searches)
+        {
+            using var response = await GetAsync(
+                $"/api/admin/djs?search={Uri.EscapeDataString(search)}",
+                token);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            AssertNoStore(response);
+
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(1, document.RootElement.GetProperty("totalCount").GetInt32());
+
+            var items = document.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Single(items);
+            Assert.Equal(expectedId, Guid.Parse(items[0].GetProperty("id").GetString()!));
+        }
+    }
+
+    [Fact]
+    public async Task List_PageIntMaxValueWithPageSize100_Returns400WithNoStore()
+    {
+        await CreateAdminAsync();
+        var token = await LoginAdminAsync();
+
+        using var response = await GetAsync(
+            $"/api/admin/djs?page={int.MaxValue}&pageSize=100",
+            token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        AssertNoStore(response);
+    }
+
+    [Fact]
+    public async Task List_SameCreatedAt_OrdersByIdWithoutDuplicatePages()
+    {
+        await CreateAdminAsync();
+        var token = await LoginAdminAsync();
+
+        var ids = new List<Guid>();
+        for (var index = 0; index < 4; index++)
+        {
+            ids.Add(await CreateDjDirectAsync($"same-{index}@test.com", $"Mismo {index}"));
+        }
+
+        var expected = ids.OrderBy(id => id).ToArray();
+
+        using var firstResponse = await GetAsync("/api/admin/djs?page=1&pageSize=2", token);
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        AssertNoStore(firstResponse);
+
+        var first = await ReadIdsAsync(firstResponse);
+        Assert.Equal(expected.Take(2), first.Ids);
+        Assert.True(first.HasMore);
+
+        using var secondResponse = await GetAsync("/api/admin/djs?page=2&pageSize=2", token);
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        AssertNoStore(secondResponse);
+
+        var second = await ReadIdsAsync(secondResponse);
+        Assert.Equal(expected.Skip(2), second.Ids);
+        Assert.False(second.HasMore);
+        Assert.Equal(4, first.Ids.Concat(second.Ids).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task ListAndGet_WithRealGuestToken_Return401WithNoStore()
+    {
+        await CreateAdminAsync();
+        var djId = await RegisterDjAsync("admin-target@test.com", "DJ Objetivo");
+        var guestToken = await CreateValidGuestTokenAsync("sala-dj@test.com");
+
+        foreach (var url in new[] { "/api/admin/djs", $"/api/admin/djs/{djId}" })
+        {
+            using var response = await GetWithGuestTokenAsync(url, guestToken);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
             AssertNoStore(response);
         }
     }

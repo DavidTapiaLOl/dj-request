@@ -12,6 +12,8 @@ public sealed class AdminDjService
 {
     public const int MaxSearchLength = 100;
 
+    private const string LikeEscape = "\\";
+
     public static readonly string[] ValidStates = ["activo", "suspendido"];
 
     private readonly DjRequestsDbContext _context;
@@ -36,10 +38,10 @@ public sealed class AdminDjService
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var pattern = $"%{search}%";
+            var pattern = BuildLikePattern(search);
             query = query.Where(d =>
-                EF.Functions.ILike(d.Email!, pattern) ||
-                EF.Functions.ILike(d.NombreArtistico, pattern));
+                EF.Functions.ILike(d.Email!, pattern, LikeEscape) ||
+                EF.Functions.ILike(d.NombreArtistico, pattern, LikeEscape));
         }
 
         if (!string.IsNullOrWhiteSpace(estado))
@@ -124,6 +126,16 @@ public sealed class AdminDjService
                 profile?.Tiktok,
                 profile?.Youtube,
                 profile?.Soundcloud));
+    }
+
+    private static string BuildLikePattern(string search)
+    {
+        var escaped = search
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal);
+
+        return $"%{escaped}%";
     }
 
     private sealed record AdminDjProfileData(
