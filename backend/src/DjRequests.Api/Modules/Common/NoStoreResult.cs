@@ -4,6 +4,8 @@ namespace DjRequests.Api.Modules.Common;
 
 public static class NoStoreResults
 {
+    public const string CacheControlValue = "no-store";
+
     public static IResult AddNoStore(IResult result) => new NoStoreResult(result);
 
     private sealed class NoStoreResult : IResult
@@ -17,7 +19,7 @@ public static class NoStoreResults
 
         public Task ExecuteAsync(HttpContext httpContext)
         {
-            httpContext.Response.Headers.CacheControl = "no-store";
+            httpContext.Response.Headers.CacheControl = CacheControlValue;
             return _inner.ExecuteAsync(httpContext);
         }
     }

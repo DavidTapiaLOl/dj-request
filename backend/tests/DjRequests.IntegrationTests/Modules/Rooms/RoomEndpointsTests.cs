@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -23,6 +24,9 @@ namespace DjRequests.IntegrationTests.Modules.Rooms;
 [Collection(IntegrationCollection.Name)]
 public class RoomEndpointsTests : IAsyncLifetime
 {
+    private static readonly DateTimeOffset ControlledNow =
+        new(2026, 11, 25, 12, 0, 0, TimeSpan.Zero);
+
     private readonly PostgresFixture _postgres;
     private WebAppFactory _factory = null!;
     private HttpClient _client = null!;
@@ -36,6 +40,13 @@ public class RoomEndpointsTests : IAsyncLifetime
     {
         _factory = new WebAppFactory(_postgres);
         await _factory.InitializeAsync();
+        SetControlledTime(_factory);
+    }
+
+    private static void SetControlledTime(WebAppFactory factory)
+    {
+        var timeProvider = (FakeTimeProvider)factory.Services.GetRequiredService<TimeProvider>();
+        timeProvider.UtcNow = ControlledNow;
     }
 
     public async Task DisposeAsync()
@@ -110,11 +121,14 @@ public class RoomEndpointsTests : IAsyncLifetime
 
     private static string FormatIso(DateTimeOffset value) => value.ToString("O");
 
-    private static CreateRoomRequest ValidRoomRequest(
+    private static string FormatUtcZ(DateTimeOffset value) =>
+        value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+
+    private CreateRoomRequest ValidRoomRequest(
         string name = "Sala de prueba",
         string timezone = "America/Mexico_City")
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = FakeTime.GetUtcNow();
         return new CreateRoomRequest(
             Name: name,
             StartsAt: FormatIso(now.AddHours(1)),
@@ -266,7 +280,7 @@ public class RoomEndpointsTests : IAsyncLifetime
     public async Task Create_EndsBeforeStarts_Returns400()
     {
         await RegisterAndLoginAsync();
-        var now = DateTimeOffset.UtcNow;
+        var now = FakeTime.GetUtcNow();
         var request = new CreateRoomRequest(
             Name: "Sala",
             StartsAt: FormatIso(now.AddHours(4)),
@@ -281,7 +295,7 @@ public class RoomEndpointsTests : IAsyncLifetime
     public async Task Create_EndsInPast_Returns400()
     {
         await RegisterAndLoginAsync();
-        var now = DateTimeOffset.UtcNow;
+        var now = FakeTime.GetUtcNow();
         var request = new CreateRoomRequest(
             Name: "Sala",
             StartsAt: FormatIso(now.AddHours(-4)),
@@ -297,18 +311,19 @@ public class RoomEndpointsTests : IAsyncLifetime
     {
         await RegisterAndLoginAsync();
 
-        var rawJson = """
+        var now = FakeTime.GetUtcNow();
+        var rawJson = $$"""
         {
           "name": "Sala Manip",
-          "startsAt": "2026-12-01T00:00:00+00:00",
-          "endsAt": "2026-12-01T04:00:00+00:00",
+          "startsAt": "{{FormatIso(now.AddHours(1))}}",
+          "endsAt": "{{FormatIso(now.AddHours(4))}}",
           "timezone": "America/Mexico_City",
           "id": "11111111-1111-1111-1111-111111111111",
           "codigo": "MANIPCODE1",
           "estado": "cerrada",
           "djId": "22222222-2222-2222-2222-222222222222",
           "version": 99,
-          "purgeAt": "2026-12-08T00:00:00+00:00"
+          "purgeAt": "{{FormatIso(now.AddHours(172))}}"
         }
         """;
         var content = new StringContent(rawJson, Encoding.UTF8, "application/json");
@@ -358,7 +373,7 @@ public class RoomEndpointsTests : IAsyncLifetime
         var request = new CreateRoomRequest(
             Name: "Sala",
             StartsAt: "2026-11-13T21:00:00",
-            EndsAt: FormatIso(DateTimeOffset.UtcNow.AddHours(4)),
+            EndsAt: FormatIso(FakeTime.GetUtcNow().AddHours(4)),
             Timezone: "America/Mexico_City");
 
         var response = await Client.PostAsJsonAsync("/api/rooms", request);
@@ -376,7 +391,7 @@ public class RoomEndpointsTests : IAsyncLifetime
         await RegisterAndLoginAsync();
         var request = new CreateRoomRequest(
             Name: "Sala",
-            StartsAt: FormatIso(DateTimeOffset.UtcNow.AddHours(1)),
+            StartsAt: FormatIso(FakeTime.GetUtcNow().AddHours(1)),
             EndsAt: "2026-11-14T03:00:00",
             Timezone: "America/Mexico_City");
 
@@ -390,15 +405,19 @@ public class RoomEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Create_StartsAtWithZ_EndsWithOffset_EquivalentInstant_PersistsSameUtc()
+    public async Task Create_StartsAtWithZ_EndsWithOffset_PersistsExpectedUtcInstants()
     {
         await RegisterAndLoginAsync();
 
-        // Mismo instante expressado de dos formas: Z y offset -06:00
+        FakeTime.UtcNow = ControlledNow;
+        var expectedStartsAtUtc = ControlledNow.AddHours(1);
+        var expectedEndsAtUtc = ControlledNow.AddHours(4);
+
+        // Inicio en Z y fin con offset -06:00 son instantes distintos.
         var request = new CreateRoomRequest(
             Name: "Sala offset",
-            StartsAt: "2026-11-14T03:00:00Z",
-            EndsAt: "2026-11-14T09:00:00-06:00",
+            StartsAt: FormatUtcZ(expectedStartsAtUtc),
+            EndsAt: FormatIso(expectedEndsAtUtc.ToOffset(TimeSpan.FromHours(-6))),
             Timezone: "America/Mexico_City");
 
         var response = await Client.PostAsJsonAsync("/api/rooms", request);
@@ -407,12 +426,9 @@ public class RoomEndpointsTests : IAsyncLifetime
         var room = await response.Content.ReadFromJsonAsync<RoomResponse>();
         Assert.NotNull(room);
 
-        // Ambos deben persistir como UTC: 03:00Z y 09:00-06:00 son el mismo instante
-        Assert.Equal(new DateTimeOffset(2026, 11, 14, 3, 0, 0, TimeSpan.Zero), room.StartsAt);
-        Assert.Equal(new DateTimeOffset(2026, 11, 14, 9, 0, 0, TimeSpan.FromHours(-6)).ToUniversalTime(), room.EndsAt);
-
-        // PurgeAt = EndsAt + 168h en UTC
-        Assert.Equal(room.EndsAt.AddHours(168), room.PurgeAt);
+        AssertDateTimesEqual(expectedStartsAtUtc, room.StartsAt);
+        AssertDateTimesEqual(expectedEndsAtUtc, room.EndsAt);
+        AssertDateTimesEqual(expectedEndsAtUtc.AddHours(168), room.PurgeAt);
     }
 
     [Fact]
@@ -422,7 +438,7 @@ public class RoomEndpointsTests : IAsyncLifetime
         var request = new CreateRoomRequest(
             Name: "Sala",
             StartsAt: "no-es-fecha",
-            EndsAt: FormatIso(DateTimeOffset.UtcNow.AddHours(4)),
+            EndsAt: FormatIso(FakeTime.GetUtcNow().AddHours(4)),
             Timezone: "America/Mexico_City");
 
         var response = await Client.PostAsJsonAsync("/api/rooms", request);
@@ -938,6 +954,7 @@ public class RoomEndpointsTests : IAsyncLifetime
     {
         await using var factory = new WebAppFactory(_postgres) { EnableRoomLockPause = true };
         await factory.InitializeAsync();
+        SetControlledTime(factory);
 
         var fakeTime = (FakeTimeProvider)factory.Services.GetRequiredService<TimeProvider>();
         var lockPause = factory.RoomLockPause!;
@@ -1185,6 +1202,7 @@ public class RoomEndpointsTests : IAsyncLifetime
             CustomCodeGenerator = new SequenceCodeGenerator("TESTCODE01", "TESTCODE02")
         };
         await factory.InitializeAsync();
+        SetControlledTime(factory);
 
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -1203,11 +1221,11 @@ public class RoomEndpointsTests : IAsyncLifetime
         {
             var dj = await seedContext.Users.SingleAsync(u => u.Email == "collide@test.com");
             djId = dj.Id;
-            seedContext.Salas.Add(BuildPersistedSala(djId, "TESTCODE01", DateTimeOffset.UtcNow));
+            seedContext.Salas.Add(BuildPersistedSala(djId, "TESTCODE01", FakeTime.GetUtcNow()));
             await seedContext.SaveChangesAsync();
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = FakeTime.GetUtcNow();
         var request = new CreateRoomRequest("Sala Colision", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
         var response = await client.PostAsJsonAsync("/api/rooms", request);
 
@@ -1231,6 +1249,7 @@ public class RoomEndpointsTests : IAsyncLifetime
             CustomCodeGenerator = new FixedCodeGenerator("TESTCODE01")
         };
         await factory.InitializeAsync();
+        SetControlledTime(factory);
 
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -1248,11 +1267,11 @@ public class RoomEndpointsTests : IAsyncLifetime
         {
             var dj = await seedContext.Users.SingleAsync(u => u.Email == "exhaust@test.com");
             djId = dj.Id;
-            seedContext.Salas.Add(BuildPersistedSala(djId, "TESTCODE01", DateTimeOffset.UtcNow));
+            seedContext.Salas.Add(BuildPersistedSala(djId, "TESTCODE01", FakeTime.GetUtcNow()));
             await seedContext.SaveChangesAsync();
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = FakeTime.GetUtcNow();
         var request = new CreateRoomRequest("Sala Exhaust", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
         var response = await client.PostAsJsonAsync("/api/rooms", request);
 
@@ -1271,7 +1290,7 @@ public class RoomEndpointsTests : IAsyncLifetime
     {
         await RegisterAndLoginAsync();
 
-        var now = DateTimeOffset.UtcNow;
+        var now = FakeTime.GetUtcNow();
         var request1 = new CreateRoomRequest("Sala Paralela 1", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
         var request2 = new CreateRoomRequest("Sala Paralela 2", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
 
@@ -1294,6 +1313,7 @@ public class RoomEndpointsTests : IAsyncLifetime
             CustomCodeGenerator = new CollidingThenFreeCodeGenerator("COLLIDE001", collideCount: 2, "FREE000001", "FREE000002")
         };
         await factory.InitializeAsync();
+        SetControlledTime(factory);
 
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -1311,11 +1331,11 @@ public class RoomEndpointsTests : IAsyncLifetime
         {
             var dj = await seedContext.Users.SingleAsync(u => u.Email == "forced@test.com");
             djId = dj.Id;
-            seedContext.Salas.Add(BuildPersistedSala(djId, "COLLIDE001", DateTimeOffset.UtcNow));
+            seedContext.Salas.Add(BuildPersistedSala(djId, "COLLIDE001", FakeTime.GetUtcNow()));
             await seedContext.SaveChangesAsync();
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = FakeTime.GetUtcNow();
         var request1 = new CreateRoomRequest("Forzada 1", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
         var request2 = new CreateRoomRequest("Forzada 2", FormatIso(now.AddHours(1)), FormatIso(now.AddHours(4)), null);
 

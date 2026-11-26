@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using DjRequests.Api.Entities;
 using DjRequests.Api.Modules.Administration.Authentication;
 using DjRequests.Api.Modules.Administration.Dtos;
-using DjRequests.Api.Modules.Common;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -77,13 +76,13 @@ public static class AdminAuthEndpoints
 
         if (errors.Count > 0)
         {
-            return NoStoreResults.AddNoStore(Results.ValidationProblem(errors));
+            return Results.ValidationProblem(errors);
         }
 
         var admin = await userManager.FindByEmailAsync(email!);
         if (admin is null || !admin.IsActive)
         {
-            return NoStoreResults.AddNoStore(Results.Unauthorized());
+            return Results.Unauthorized();
         }
 
         var result = await signInManager.CheckPasswordSignInAsync(
@@ -92,12 +91,11 @@ public static class AdminAuthEndpoints
             lockoutOnFailure: true);
         if (!result.Succeeded)
         {
-            return NoStoreResults.AddNoStore(Results.Unauthorized());
+            return Results.Unauthorized();
         }
 
         var principal = await signInManager.CreateUserPrincipalAsync(admin);
-        return NoStoreResults.AddNoStore(
-            TypedResults.SignIn(principal, authenticationScheme: AdminAuthenticationDefaults.BearerScheme));
+        return TypedResults.SignIn(principal, authenticationScheme: AdminAuthenticationDefaults.BearerScheme);
     }
 
     private static async Task<IResult> RefreshAsync(
@@ -108,10 +106,10 @@ public static class AdminAuthEndpoints
     {
         if (string.IsNullOrWhiteSpace(request.RefreshToken))
         {
-            return NoStoreResults.AddNoStore(Results.ValidationProblem(new Dictionary<string, string[]>
+            return Results.ValidationProblem(new Dictionary<string, string[]>
             {
                 ["RefreshToken"] = new[] { "El token de actualizacion es obligatorio." }
-            }));
+            });
         }
 
         var options = bearerTokenOptions.Get(AdminAuthenticationDefaults.BearerScheme);
@@ -123,24 +121,23 @@ public static class AdminAuthEndpoints
         }
         catch (CryptographicException)
         {
-            return NoStoreResults.AddNoStore(Results.Unauthorized());
+            return Results.Unauthorized();
         }
 
         if (ticket?.Properties?.ExpiresUtc is not DateTimeOffset expiresUtc ||
             expiresUtc <= timeProvider.GetUtcNow())
         {
-            return NoStoreResults.AddNoStore(Results.Unauthorized());
+            return Results.Unauthorized();
         }
 
         var admin = await signInManager.ValidateSecurityStampAsync(ticket.Principal);
         if (admin is null || !admin.IsActive)
         {
-            return NoStoreResults.AddNoStore(Results.Unauthorized());
+            return Results.Unauthorized();
         }
 
         var principal = await signInManager.CreateUserPrincipalAsync(admin);
-        return NoStoreResults.AddNoStore(
-            TypedResults.SignIn(principal, authenticationScheme: AdminAuthenticationDefaults.BearerScheme));
+        return TypedResults.SignIn(principal, authenticationScheme: AdminAuthenticationDefaults.BearerScheme);
     }
 
     private static async Task<IResult> MeAsync(
@@ -150,16 +147,15 @@ public static class AdminAuthEndpoints
         var userId = user.FindFirstValue(ClaimTypes.NameIdentifier);
         if (!Guid.TryParse(userId, out var id))
         {
-            return NoStoreResults.AddNoStore(Results.Unauthorized());
+            return Results.Unauthorized();
         }
 
         var admin = await userManager.FindByIdAsync(id.ToString());
         if (admin is null || !admin.IsActive)
         {
-            return NoStoreResults.AddNoStore(Results.Forbid());
+            return Results.Forbid();
         }
 
-        return NoStoreResults.AddNoStore(
-            Results.Ok(new AdminMeResponse(admin.Id, admin.Name, admin.Email!)));
+        return Results.Ok(new AdminMeResponse(admin.Id, admin.Name, admin.Email!));
     }
 }

@@ -7,6 +7,7 @@ using DjRequests.Api.Modules.Administration.Authentication;
 using DjRequests.Api.Modules.Administration.Endpoints;
 using DjRequests.Api.Modules.Administration.Options;
 using DjRequests.Api.Modules.Accounts.Options;
+using DjRequests.Api.Modules.Common;
 using DjRequests.Api.Modules.Accounts.Policies;
 using DjRequests.Api.Modules.Genres.Endpoints;
 using DjRequests.Api.Modules.Guests.Endpoints;
@@ -199,7 +200,7 @@ builder.Services.AddRateLimiter(options =>
 
         if (!context.HttpContext.Response.HasStarted)
         {
-            context.HttpContext.Response.Headers.CacheControl = "no-store";
+            context.HttpContext.Response.Headers.CacheControl = NoStoreResults.CacheControlValue;
         }
 
         var problemDetailsService = context.HttpContext.RequestServices.GetService<IProblemDetailsService>();
@@ -262,6 +263,7 @@ builder.Services.AddEndpointsApiExplorer();
 var app = builder.Build();
 
 app.UseRouting();
+app.UseAdminAuthNoStore();
 
 if (app.Environment.IsDevelopment())
 {

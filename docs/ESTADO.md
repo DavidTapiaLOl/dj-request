@@ -1,4 +1,42 @@
-﻿# DJ Requests — Estado de la tarea 13A (base de autenticación administrativa)
+﻿# DJ Requests — Verificación y correcciones posteriores de autenticación administrativa (2026-11-25)
+
+## Alcance ejecutado
+Verificación y endurecimiento de la base de autenticación administrativa antes de iniciar gestión administrativa de DJs, con autorización explícita del plan. Rama `feat/admin-auth`, HEAD `cd2098b`, sin commit ni push. No se tocaron migraciones, `dj_requests`, clientes, contratos DJ/invitado, dependencias ni LAN. Los cambios del usuario previos a esta tarea se conservaron.
+
+## Cambios aplicados
+- `backend/src/DjRequests.Api/Modules/Administration/AdminAuthNoStoreMiddleware.cs` — **nuevo**: fija `Cache-Control: no-store` en `/api/admin/auth` antes de rate limiting/autenticación y lo reaplica en `Response.OnStarting` para cubrir respuestas que limpian cabeceras (JSON malformado).
+- `backend/src/DjRequests.Api/Modules/Common/NoStoreResult.cs` — expone `CacheControlValue` para reutilizar el valor sin duplicarlo.
+- `backend/src/DjRequests.Api/Program.cs` — registra el middleware tras `UseRouting()`; el rate limiter usa la misma constante.
+- `backend/src/DjRequests.Api/Modules/Administration/Endpoints/AdminAuthEndpoints.cs` — elimina wrappers `NoStoreResults.AddNoStore(...)`; la cabecera la garantiza el middleware de ruta.
+- `backend/src/DjRequests.Api/Modules/Administration/Provisioning/AdminProvisioningService.cs` — valida trim, nombre 1-100, correo 1-256 y formato, contraseña no vacía y duplicados por email (`FindByEmailAsync`, SQLSTATE 23505 y errores Identity de duplicado); registra solo códigos/ID, nunca secretos.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Rooms/RoomEndpointsTests.cs` — reloj controlado `2026-11-25T12:00:00Z`, helpers de fechas y corrección del caso inválido que trataba `03:00Z` y `09:00-06:00` como instantes equivalentes; ahora se validan ambos instantes y `PurgeAt`.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Administration/AdminAuthEndpointsTests.cs` — amplía cobertura a 400/JSON malformado, 401/403, 429, caducidad access/refresh, inactivo, security stamp, tokens cruzados DJ↔admin, mismo GUID, lockout y ausencia de registro público.
+- `backend/tests/DjRequests.IntegrationTests/Modules/Administration/AdminProvisioningServiceTests.cs` — **nuevo**: 11 pruebas con PostgreSQL/Testcontainers para trim, límites 100/256, correo inválido, contraseña vacía, duplicado insensible a mayúsculas sin sobrescritura y duplicado concurrente (una sola cuenta).
+- `docs/ESTADO.md` — esta sección.
+
+## Resultados reales (verificados con evidencia)
+
+| Comprobación | Resultado real |
+|---|---|
+| Docker inicial | `docker info` falló: `dockerDesktopLinuxEngine` no disponible. Se inició Docker Desktop; daemon respondió `Docker 27.0.3 listo`. |
+| `dotnet build backend\DjRequests.slnx --nologo` (final) | Correcto: 0 errores, 1 aviso de licencia de `SixLabors.ImageSharp 4.1.3`. En ejecuciones intermedias apareció además el aviso preexistente `CS0618` en `DatabaseFixture.cs`. |
+| Primera ejecución de pruebas afectadas | 97/98; único fallo `AdminAuthEndpointsTests.Login_MalformedJson_Returns400WithNoStore` sin `Cache-Control: no-store`. Corregido con `Response.OnStarting`. |
+| Pruebas afectadas, tras la corrección | `dotnet test backend\tests\DjRequests.IntegrationTests\DjRequests.IntegrationTests.csproj --nologo --filter "FullyQualifiedName~RoomEndpointsTests|FullyQualifiedName~AdminAuthEndpointsTests|FullyQualifiedName~AdminProvisioningServiceTests"` → **98/98 correctas**, 0 fallidas, 0 omitidas, 40 s. |
+| Suite completa | `dotnet test backend\DjRequests.slnx --nologo` → **377/377 correctas**, 0 fallidas, 0 omitidas, 2 m 9 s, PostgreSQL 17 con Testcontainers. |
+| `git diff --check` | Código de salida 0; solo avisos LF→CRLF propios del repositorio. |
+| Git | `## feat/admin-auth...origin/feat/admin-auth`; 7 archivos modificados y 2 rutas nuevas (incluye `docs/ESTADO.md`); sin commit ni push. |
+| Base de datos | Ninguna migración generada ni aplicada en esta tarea; `AddAdminIdentity` sigue **generada, no aplicada por este agente**; `dj_requests` no fue tocada. |
+
+## Límites y pendientes
+- No se ha publicado ni modificado el commit actual; los cambios verificados están en el árbol de trabajo.
+- `AddAdminIdentity` continúa pendiente de revisión/aplicación por el usuario; no se regeneró el SQL de revisión.
+- La gestión administrativa de DJs no se inició; es el siguiente paso una vez aceptado este estado.
+- Sin secretos, tokens, cadenas de conexión ni `.env` en diffs, logs o documentación.
+- La sección histórica de la tarea 13A siguiente describe el estado de aquel momento, no el estado final verificado arriba.
+
+---
+
+# DJ Requests — Estado de la tarea 13A (base de autenticación administrativa)
 
 ## Resumen
 Base de autenticación para administradores separada de DJs e invitados: `AdminAccount` y `AdminDbContext` con Identity, tablas `admin_*`, esquema bearer `AdminBearer` y política `ActiveAdmin`, endpoints `POST /api/admin/auth/login`, `POST /api/admin/auth/refresh` y `GET /api/admin/auth/me`, y alta interactiva explícita mediante `--provision-admin`. Sin registro público, roles, seed, dashboard ni segundo factor. `AddAdminIdentity` fue **generada**, con SQL de revisión; **no aplicada** a `dj_requests` por este agente.
